@@ -1,6 +1,7 @@
 import os
 import sys
 import threading
+import uuid
 import io
 import requests
 from PIL import Image, ImageTk
@@ -12,35 +13,76 @@ from config_manager import ConfigManager
 from downloader_core import DownloaderCore, DownloadCancelledException
 from circular_progress import CircularProgressRing
 
-# Configure theme & colors
+# Configure theme & appearance
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("blue")
 
-# Theme Palette Constants
-BG_BLACK = "#0B0C0E"
-CARD_BG = "#181922"
-CARD_HOVER = "#20222e"
-TEXT_PRIMARY = "#FFFFFF"
-TEXT_MUTED = "#8A8C98"
-ACCENT_BLUE = "#2563eb"
-ACCENT_GREEN = "#16a34a"
-BORDER_DARK = "#262733"
+# Theme Palette Tuples (Light Mode Color, Dark Mode Color)
+THEME_BG = ("#F0F2F5", "#0B0C0E")
+THEME_CARD = ("#FFFFFF", "#181922")
+THEME_CARD_INNER = ("#F8F9FB", "#101117")
+THEME_BORDER = ("#E2E4E9", "#262733")
+THEME_TEXT_PRIMARY = ("#0F172A", "#FFFFFF")
+THEME_TEXT_MUTED = ("#64748B", "#8A8C98")
+
+# Button styling tuples
+THEME_BTN_PRIMARY_BG = ("#0F172A", "#FFFFFF")
+THEME_BTN_PRIMARY_HOVER = ("#1E293B", "#E2E8F0")
+THEME_BTN_PRIMARY_TEXT = ("#FFFFFF", "#000000")
+
+THEME_BTN_SECONDARY_BG = ("#E2E8F0", "#262733")
+THEME_BTN_SECONDARY_HOVER = ("#CBD5E1", "#343646")
+THEME_BTN_SECONDARY_TEXT = ("#0F172A", "#FFFFFF")
+
+THEME_ACCENT_BLUE = ("#2563EB", "#3B82F6")
+THEME_ACCENT_GREEN = ("#16A34A", "#22C55E")
+THEME_ACCENT_RED = ("#DC2626", "#EF4444")
+
+
+class QueueItem:
+    def __init__(self, url, info, options, save_dir):
+        self.id = str(uuid.uuid4())[:8]
+        self.url = url
+        self.info = info or {}
+        self.options = options
+        self.save_dir = save_dir
+        self.status = "Queued"  # Queued, Downloading, Complete, Failed, Cancelled
+        self.progress = 0.0
+        self.speed = "0.0 MB/s"
+        self.eta = "--"
+        self.downloaded_str = "0 MB"
+        self.total_str = "0 MB"
+        self.filename = ""
+        self.error_msg = ""
+        
+        # Display meta
+        self.title = self.info.get('title', 'Unknown Media')
+        self.platform = self.info.get('platform', {'name': 'Media', 'badge': '🎬 Media', 'color': '#3B82F6'})
+        self.is_playlist = self.info.get('type') == 'playlist'
+        self.item_count = self.info.get('item_count', 1)
 
 
 class YouTubeDownloaderApp(ctk.CTk):
     def __init__(self):
         super().__init__()
 
-        self.title("Universal Media & Playlist Downloader")
-        self.geometry("980x880")
-        self.minsize(860, 760)
-        self.configure(fg_color=BG_BLACK)
+        self.title("Universal Media & Playlist Downloader Pro")
+        self.geometry("1020x920")
+        self.minsize(880, 780)
+        self.configure(fg_color=THEME_BG)
 
         # Core logic & Config
         self.config_manager = ConfigManager()
         self.core = DownloaderCore()
         self.current_info = None
         self.is_fetching = False
+
+        # Queue Management
+        self.download_queue = []
+        self.current_queue_item = None
+        self.queue_thread = None
+        self.queue_lock = threading.Lock()
+        self.queue_running = False
 
         # Setup UI
         self._setup_ui()
@@ -54,9 +96,9 @@ class YouTubeDownloaderApp(ctk.CTk):
         self.scroll_frame = ctk.CTkScrollableFrame(
             self, 
             corner_radius=0, 
-            fg_color=BG_BLACK
+            fg_color=THEME_BG
         )
-        self.scroll_frame.grid(row=0, column=0, sticky="nsew", padx=24, pady=20)
+        self.scroll_frame.grid(row=0, column=0, sticky="nsew", padx=20, pady=16)
         self.scroll_frame.grid_columnconfigure(0, weight=1)
 
         # 1. Header Bar
@@ -68,18 +110,21 @@ class YouTubeDownloaderApp(ctk.CTk):
         # 3. 3-Column Bento Grid (Media Preview, Speed Metric, Progress Ring)
         self._create_bento_grid(self.scroll_frame)
 
-        # 4. Settings Split Cards (Storage Location & Quality/Format)
+        # 4. Settings Split Cards (Storage Location & Quality/Format with 480p & 360p)
         self._create_bottom_split_cards(self.scroll_frame)
 
-        # 5. Download Action Bar
+        # 5. Download Action Bar (Add to Queue & Download Now)
         self._create_action_bar(self.scroll_frame)
 
-        # 6. Collapsible Activity Log Drawer
+        # 6. Download Queue Bento Card
+        self._create_queue_section(self.scroll_frame)
+
+        # 7. Collapsible Activity Log Drawer
         self._create_log_drawer(self.scroll_frame)
 
     def _create_header(self, parent):
         header_frame = ctk.CTkFrame(parent, fg_color="transparent")
-        header_frame.grid(row=0, column=0, sticky="ew", pady=(0, 16))
+        header_frame.grid(row=0, column=0, sticky="ew", pady=(0, 14))
         header_frame.grid_columnconfigure(0, weight=1)
 
         # Title & Supported Platforms pills
@@ -90,45 +135,46 @@ class YouTubeDownloaderApp(ctk.CTk):
             title_box,
             text="Downloader",
             font=ctk.CTkFont(size=28, weight="bold"),
-            text_color=TEXT_PRIMARY
+            text_color=THEME_TEXT_PRIMARY
         )
         title_lbl.pack(side="left", padx=(0, 14))
 
         # Platform badges pill
-        platforms_pill = ctk.CTkFrame(title_box, fg_color=CARD_BG, corner_radius=20)
+        platforms_pill = ctk.CTkFrame(title_box, fg_color=THEME_CARD, corner_radius=20)
         platforms_pill.pack(side="left", pady=2)
 
-        badge_text = "▶ YouTube • 📸 Instagram • 𝕏 Twitter • 📌 Pinterest • 🎵 TikTok"
+        badge_text = "▶ YouTube • 📸 Instagram • 𝕏 Twitter • 📌 Pinterest • 🎵 TikTok • 🤖 Reddit"
         badge_lbl = ctk.CTkLabel(
             platforms_pill,
             text=badge_text,
             font=ctk.CTkFont(size=11, weight="bold"),
-            text_color=TEXT_MUTED,
+            text_color=THEME_TEXT_MUTED,
             padx=12,
             pady=4
         )
         badge_lbl.pack()
 
-        # Action pills on right
+        # Theme toggle on right
         ctrl_box = ctk.CTkFrame(header_frame, fg_color="transparent")
         ctrl_box.grid(row=0, column=1, sticky="e")
 
         self.theme_btn = ctk.CTkButton(
             ctrl_box,
             text="🌙 Dark",
-            width=70,
-            height=32,
-            corner_radius=16,
-            fg_color=CARD_BG,
-            hover_color=CARD_HOVER,
-            font=ctk.CTkFont(size=12),
+            width=85,
+            height=34,
+            corner_radius=17,
+            fg_color=THEME_BTN_SECONDARY_BG,
+            hover_color=THEME_BTN_SECONDARY_HOVER,
+            text_color=THEME_BTN_SECONDARY_TEXT,
+            font=ctk.CTkFont(size=12, weight="bold"),
             command=self._cycle_theme
         )
-        self.theme_btn.pack(side="left", padx=(0, 8))
+        self.theme_btn.pack(side="left")
 
     def _create_url_capsule(self, parent):
-        url_card = ctk.CTkFrame(parent, fg_color=CARD_BG, corner_radius=18)
-        url_card.grid(row=1, column=0, sticky="ew", pady=(0, 16))
+        url_card = ctk.CTkFrame(parent, fg_color=THEME_CARD, corner_radius=18)
+        url_card.grid(row=1, column=0, sticky="ew", pady=(0, 14))
         url_card.grid_columnconfigure(0, weight=1)
 
         inner_frame = ctk.CTkFrame(url_card, fg_color="transparent")
@@ -138,12 +184,12 @@ class YouTubeDownloaderApp(ctk.CTk):
         self.url_entry = ctk.CTkEntry(
             inner_frame,
             placeholder_text="Enter or paste video, reel, post, or playlist URL...",
-            height=40,
-            corner_radius=12,
-            fg_color="#101117",
-            border_color=BORDER_DARK,
+            height=42,
+            corner_radius=14,
+            fg_color=THEME_CARD_INNER,
+            border_color=THEME_BORDER,
             font=ctk.CTkFont(size=13),
-            text_color=TEXT_PRIMARY
+            text_color=THEME_TEXT_PRIMARY
         )
         self.url_entry.grid(row=0, column=0, sticky="ew", padx=(0, 10))
         self.url_entry.bind("<Return>", lambda e: self._on_fetch_clicked())
@@ -153,12 +199,13 @@ class YouTubeDownloaderApp(ctk.CTk):
 
         self.paste_btn = ctk.CTkButton(
             btn_box,
-            text="Paste",
-            width=70,
-            height=36,
+            text="📋 Paste",
+            width=80,
+            height=38,
             corner_radius=14,
-            fg_color="#262733",
-            hover_color="#343646",
+            fg_color=THEME_BTN_SECONDARY_BG,
+            hover_color=THEME_BTN_SECONDARY_HOVER,
+            text_color=THEME_BTN_SECONDARY_TEXT,
             font=ctk.CTkFont(size=12, weight="bold"),
             command=self._paste_from_clipboard
         )
@@ -166,13 +213,13 @@ class YouTubeDownloaderApp(ctk.CTk):
 
         self.fetch_btn = ctk.CTkButton(
             btn_box,
-            text="Inspect",
-            width=85,
-            height=36,
+            text="🔍 Inspect",
+            width=90,
+            height=38,
             corner_radius=14,
-            fg_color=TEXT_PRIMARY,
-            text_color="#000000",
-            hover_color="#e0e0e0",
+            fg_color=THEME_BTN_PRIMARY_BG,
+            hover_color=THEME_BTN_PRIMARY_HOVER,
+            text_color=THEME_BTN_PRIMARY_TEXT,
             font=ctk.CTkFont(size=12, weight="bold"),
             command=self._on_fetch_clicked
         )
@@ -181,39 +228,40 @@ class YouTubeDownloaderApp(ctk.CTk):
         self.clear_btn = ctk.CTkButton(
             btn_box,
             text="✕",
-            width=36,
-            height=36,
+            width=38,
+            height=38,
             corner_radius=14,
-            fg_color="#262733",
-            hover_color="#343646",
-            font=ctk.CTkFont(size=12),
+            fg_color=THEME_BTN_SECONDARY_BG,
+            hover_color=THEME_BTN_SECONDARY_HOVER,
+            text_color=THEME_BTN_SECONDARY_TEXT,
+            font=ctk.CTkFont(size=13, weight="bold"),
             command=self._clear_url
         )
         self.clear_btn.pack(side="left")
 
     def _create_bento_grid(self, parent):
         bento_container = ctk.CTkFrame(parent, fg_color="transparent")
-        bento_container.grid(row=2, column=0, sticky="ew", pady=(0, 16))
-        bento_container.grid_columnconfigure(0, weight=3) # Preview card (wider)
+        bento_container.grid(row=2, column=0, sticky="ew", pady=(0, 14))
+        bento_container.grid_columnconfigure(0, weight=3) # Preview card
         bento_container.grid_columnconfigure(1, weight=2) # Speed metric card
         bento_container.grid_columnconfigure(2, weight=2) # Progress ring card
 
         # --- BENTO CARD 1: Media Preview ---
-        self.preview_card = ctk.CTkFrame(bento_container, fg_color=CARD_BG, corner_radius=18, height=210)
+        self.preview_card = ctk.CTkFrame(bento_container, fg_color=THEME_CARD, corner_radius=18, height=210)
         self.preview_card.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
         self.preview_card.grid_propagate(False)
         self.preview_card.grid_columnconfigure(1, weight=1)
 
-        # Thumbnail canvas / placeholder
+        # Thumbnail
         self.thumb_label = ctk.CTkLabel(
             self.preview_card,
             text="No Media\nSelected",
             width=170,
             height=110,
             corner_radius=12,
-            fg_color="#101117",
-            text_color=TEXT_MUTED,
-            font=ctk.CTkFont(size=12)
+            fg_color=THEME_CARD_INNER,
+            text_color=THEME_TEXT_MUTED,
+            font=ctk.CTkFont(size=12, weight="bold")
         )
         self.thumb_label.grid(row=0, column=0, padx=14, pady=14, sticky="nw")
 
@@ -222,7 +270,6 @@ class YouTubeDownloaderApp(ctk.CTk):
         meta_box.grid(row=0, column=1, sticky="nsew", padx=(0, 14), pady=14)
         meta_box.grid_columnconfigure(0, weight=1)
 
-        # Platform + Type badge row
         badge_row = ctk.CTkFrame(meta_box, fg_color="transparent")
         badge_row.pack(fill="x", anchor="w", pady=(0, 4))
 
@@ -230,19 +277,19 @@ class YouTubeDownloaderApp(ctk.CTk):
             badge_row,
             text="READY",
             font=ctk.CTkFont(size=11, weight="bold"),
-            fg_color="#262733",
+            fg_color=THEME_BTN_SECONDARY_BG,
+            text_color=THEME_BTN_SECONDARY_TEXT,
             corner_radius=8,
             padx=8,
-            pady=2,
-            text_color=TEXT_PRIMARY
+            pady=2
         )
         self.platform_badge.pack(side="left", padx=(0, 6))
 
         self.meta_duration_label = ctk.CTkLabel(
             badge_row,
             text="",
-            font=ctk.CTkFont(size=11),
-            text_color=TEXT_MUTED
+            font=ctk.CTkFont(size=11, weight="bold"),
+            text_color=THEME_TEXT_MUTED
         )
         self.meta_duration_label.pack(side="left")
 
@@ -251,10 +298,10 @@ class YouTubeDownloaderApp(ctk.CTk):
             meta_box,
             text="Paste a link above to preview video, reel, or playlist details.",
             font=ctk.CTkFont(size=13, weight="bold"),
-            text_color=TEXT_PRIMARY,
+            text_color=THEME_TEXT_PRIMARY,
             anchor="w",
             justify="left",
-            wraplength=230
+            wraplength=240
         )
         self.meta_title_label.pack(fill="x", anchor="w", pady=(2, 2))
 
@@ -263,32 +310,32 @@ class YouTubeDownloaderApp(ctk.CTk):
             meta_box,
             text="",
             font=ctk.CTkFont(size=11),
-            text_color=TEXT_MUTED,
+            text_color=THEME_TEXT_MUTED,
             anchor="w"
         )
         self.meta_channel_label.pack(fill="x", anchor="w")
 
-        # Playlist range capsule (embedded inside preview card)
-        self.pl_box = ctk.CTkFrame(self.preview_card, fg_color="#101117", corner_radius=10)
+        # Playlist range capsule
+        self.pl_box = ctk.CTkFrame(self.preview_card, fg_color=THEME_CARD_INNER, corner_radius=10)
         self.pl_box.grid(row=1, column=0, columnspan=2, sticky="ew", padx=14, pady=(0, 12))
         self.pl_box.grid_columnconfigure(1, weight=1)
-        self.pl_box.grid_remove() # hidden by default
+        self.pl_box.grid_remove()
 
-        pl_lbl = ctk.CTkLabel(self.pl_box, text="Items Range:", font=ctk.CTkFont(size=11, weight="bold"), text_color=TEXT_MUTED)
+        pl_lbl = ctk.CTkLabel(self.pl_box, text="Items Range:", font=ctk.CTkFont(size=11, weight="bold"), text_color=THEME_TEXT_MUTED)
         pl_lbl.grid(row=0, column=0, padx=(10, 6), pady=6, sticky="w")
 
         self.pl_range_entry = ctk.CTkEntry(
             self.pl_box,
             placeholder_text="All (or e.g. 1-10, 15)",
             height=26,
-            fg_color=CARD_BG,
-            border_color=BORDER_DARK,
+            fg_color=THEME_CARD,
+            border_color=THEME_BORDER,
             font=ctk.CTkFont(size=11)
         )
         self.pl_range_entry.grid(row=0, column=1, padx=(0, 10), pady=6, sticky="ew")
 
         # --- BENTO CARD 2: Speed Metric ---
-        self.speed_card = ctk.CTkFrame(bento_container, fg_color=CARD_BG, corner_radius=18, height=210)
+        self.speed_card = ctk.CTkFrame(bento_container, fg_color=THEME_CARD, corner_radius=18, height=210)
         self.speed_card.grid(row=0, column=1, sticky="nsew", padx=(0, 12))
         self.speed_card.grid_propagate(False)
 
@@ -299,7 +346,7 @@ class YouTubeDownloaderApp(ctk.CTk):
             speed_inner,
             text="0.0",
             font=ctk.CTkFont(size=44, weight="bold"),
-            text_color=TEXT_PRIMARY
+            text_color=THEME_TEXT_PRIMARY
         )
         self.speed_val_label.pack(anchor="center")
 
@@ -307,15 +354,15 @@ class YouTubeDownloaderApp(ctk.CTk):
             speed_inner,
             text="MB/s Speed",
             font=ctk.CTkFont(size=13, weight="bold"),
-            text_color=TEXT_MUTED
+            text_color=THEME_TEXT_MUTED
         )
-        self.speed_unit_label.pack(anchor="center", pady=(0, 8))
+        self.speed_unit_label.pack(anchor="center", pady=(0, 6))
 
         self.size_detail_label = ctk.CTkLabel(
             speed_inner,
             text="0 MB / 0 MB",
-            font=ctk.CTkFont(size=11),
-            text_color=TEXT_MUTED
+            font=ctk.CTkFont(size=11, weight="bold"),
+            text_color=THEME_TEXT_MUTED
         )
         self.size_detail_label.pack(anchor="center")
 
@@ -323,21 +370,18 @@ class YouTubeDownloaderApp(ctk.CTk):
         self.progress_card = CircularProgressRing(
             bento_container,
             size=130,
-            ring_width=8,
-            bg_color=CARD_BG,
-            track_color="#262733",
-            progress_color=TEXT_PRIMARY
+            ring_width=8
         )
         self.progress_card.grid(row=0, column=2, sticky="nsew")
 
     def _create_bottom_split_cards(self, parent):
         split_container = ctk.CTkFrame(parent, fg_color="transparent")
-        split_container.grid(row=3, column=0, sticky="ew", pady=(0, 16))
+        split_container.grid(row=3, column=0, sticky="ew", pady=(0, 14))
         split_container.grid_columnconfigure(0, weight=3) # Folder path card
-        split_container.grid_columnconfigure(1, weight=3) # Format pill card
+        split_container.grid_columnconfigure(1, weight=4) # Format pill card (wider for all resolutions)
 
         # 1. Custom Save Folder Card
-        folder_card = ctk.CTkFrame(split_container, fg_color=CARD_BG, corner_radius=18)
+        folder_card = ctk.CTkFrame(split_container, fg_color=THEME_CARD, corner_radius=18)
         folder_card.grid(row=0, column=0, sticky="ew", padx=(0, 12))
         folder_card.grid_columnconfigure(0, weight=1)
 
@@ -347,12 +391,12 @@ class YouTubeDownloaderApp(ctk.CTk):
 
         self.dir_entry = ctk.CTkEntry(
             f_inner,
-            height=36,
+            height=38,
             corner_radius=12,
-            fg_color="#101117",
-            border_color=BORDER_DARK,
+            fg_color=THEME_CARD_INNER,
+            border_color=THEME_BORDER,
             font=ctk.CTkFont(size=11),
-            text_color=TEXT_PRIMARY
+            text_color=THEME_TEXT_PRIMARY
         )
         self.dir_entry.grid(row=0, column=0, sticky="ew", padx=(0, 8))
 
@@ -361,12 +405,13 @@ class YouTubeDownloaderApp(ctk.CTk):
 
         self.browse_btn = ctk.CTkButton(
             f_btns,
-            text="Browse",
-            width=70,
-            height=34,
+            text="📁 Browse",
+            width=80,
+            height=36,
             corner_radius=12,
-            fg_color="#262733",
-            hover_color="#343646",
+            fg_color=THEME_BTN_SECONDARY_BG,
+            hover_color=THEME_BTN_SECONDARY_HOVER,
+            text_color=THEME_BTN_SECONDARY_TEXT,
             font=ctk.CTkFont(size=11, weight="bold"),
             command=self._browse_directory
         )
@@ -375,33 +420,34 @@ class YouTubeDownloaderApp(ctk.CTk):
         self.open_folder_btn = ctk.CTkButton(
             f_btns,
             text="📂 Open",
-            width=70,
-            height=34,
+            width=75,
+            height=36,
             corner_radius=12,
-            fg_color="#262733",
-            hover_color="#343646",
+            fg_color=THEME_BTN_SECONDARY_BG,
+            hover_color=THEME_BTN_SECONDARY_HOVER,
+            text_color=THEME_BTN_SECONDARY_TEXT,
             font=ctk.CTkFont(size=11, weight="bold"),
             command=self._open_download_folder
         )
         self.open_folder_btn.pack(side="left")
 
-        # 2. Format & Quality Segmented Pill Card
-        format_card = ctk.CTkFrame(split_container, fg_color=CARD_BG, corner_radius=18)
+        # 2. Format & Quality Segmented Pill Card (With 480p and 360p included)
+        format_card = ctk.CTkFrame(split_container, fg_color=THEME_CARD, corner_radius=18)
         format_card.grid(row=0, column=1, sticky="ew")
 
         fmt_inner = ctk.CTkFrame(format_card, fg_color="transparent")
-        fmt_inner.pack(fill="x", padx=14, pady=12)
+        fmt_inner.pack(fill="x", padx=12, pady=12)
 
         self.format_segment = ctk.CTkSegmentedButton(
             fmt_inner,
-            values=["4K MP4", "1080p", "720p", "MP3 Audio", "WAV"],
-            height=36,
-            corner_radius=12,
-            selected_color="#ffffff",
-            selected_hover_color="#e0e0e0",
-            unselected_color="#101117",
-            unselected_hover_color="#20222e",
-            text_color="#000000",
+            values=["4K MP4", "1080p", "720p", "480p", "360p", "MP3 Audio", "WAV"],
+            height=38,
+            corner_radius=14,
+            selected_color=THEME_BTN_PRIMARY_BG,
+            selected_hover_color=THEME_BTN_PRIMARY_HOVER,
+            unselected_color=THEME_CARD_INNER,
+            unselected_hover_color=THEME_BTN_SECONDARY_HOVER,
+            text_color=THEME_BTN_PRIMARY_TEXT,
             font=ctk.CTkFont(size=11, weight="bold"),
             command=self._on_format_segment_changed
         )
@@ -409,26 +455,43 @@ class YouTubeDownloaderApp(ctk.CTk):
         self.format_segment.pack(fill="x")
 
     def _create_action_bar(self, parent):
-        action_card = ctk.CTkFrame(parent, fg_color=CARD_BG, corner_radius=18)
-        action_card.grid(row=4, column=0, sticky="ew", pady=(0, 16))
+        action_card = ctk.CTkFrame(parent, fg_color=THEME_CARD, corner_radius=18)
+        action_card.grid(row=4, column=0, sticky="ew", pady=(0, 14))
         action_card.grid_columnconfigure(0, weight=1)
 
         inner = ctk.CTkFrame(action_card, fg_color="transparent")
-        inner.pack(fill="x", padx=16, pady=14)
+        inner.pack(fill="x", padx=16, pady=12)
         inner.grid_columnconfigure(0, weight=1)
 
+        # Left action buttons: Add to Queue & Download Now
+        btn_box = ctk.CTkFrame(inner, fg_color="transparent")
+        btn_box.pack(side="left", fill="x", expand=True)
+
         self.download_btn = ctk.CTkButton(
-            inner,
-            text="🚀  START DOWNLOAD",
+            btn_box,
+            text="🚀  DOWNLOAD NOW",
             height=46,
             corner_radius=14,
-            font=ctk.CTkFont(size=14, weight="bold"),
-            fg_color=TEXT_PRIMARY,
-            text_color="#000000",
-            hover_color="#e0e0e0",
-            command=self._start_download
+            font=ctk.CTkFont(size=13, weight="bold"),
+            fg_color=THEME_ACCENT_GREEN,
+            hover_color=("#15803D", "#16A34A"),
+            text_color="#FFFFFF",
+            command=self._download_now
         )
-        self.download_btn.pack(side="left", fill="x", expand=True, padx=(0, 10))
+        self.download_btn.pack(side="left", fill="x", expand=True, padx=(0, 8))
+
+        self.add_queue_btn = ctk.CTkButton(
+            btn_box,
+            text="➕  ADD TO QUEUE",
+            height=46,
+            corner_radius=14,
+            font=ctk.CTkFont(size=13, weight="bold"),
+            fg_color=THEME_ACCENT_BLUE,
+            hover_color=("#1D4ED8", "#2563EB"),
+            text_color="#FFFFFF",
+            command=self._add_to_queue
+        )
+        self.add_queue_btn.pack(side="left", fill="x", expand=True, padx=(0, 8))
 
         self.cancel_btn = ctk.CTkButton(
             inner,
@@ -437,16 +500,66 @@ class YouTubeDownloaderApp(ctk.CTk):
             width=110,
             corner_radius=14,
             font=ctk.CTkFont(size=12, weight="bold"),
-            fg_color="#dc2626",
-            hover_color="#b91c1c",
+            fg_color=THEME_ACCENT_RED,
+            hover_color=("#B91C1C", "#DC2626"),
+            text_color="#FFFFFF",
             state="disabled",
-            command=self._cancel_download
+            command=self._cancel_current_or_queue
         )
         self.cancel_btn.pack(side="right")
 
+    def _create_queue_section(self, parent):
+        self.queue_card = ctk.CTkFrame(parent, fg_color=THEME_CARD, corner_radius=18)
+        self.queue_card.grid(row=5, column=0, sticky="ew", pady=(0, 14))
+        self.queue_card.grid_columnconfigure(0, weight=1)
+
+        # Header with queue counts and clear button
+        q_header = ctk.CTkFrame(self.queue_card, fg_color="transparent")
+        q_header.grid(row=0, column=0, sticky="ew", padx=16, pady=(12, 8))
+        q_header.grid_columnconfigure(0, weight=1)
+
+        self.q_title_label = ctk.CTkLabel(
+            q_header,
+            text="📥 Download Queue (0 items)",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            text_color=THEME_TEXT_PRIMARY
+        )
+        self.q_title_label.pack(side="left")
+
+        q_actions = ctk.CTkFrame(q_header, fg_color="transparent")
+        q_actions.pack(side="right")
+
+        self.clear_queue_btn = ctk.CTkButton(
+            q_actions,
+            text="Clear Finished",
+            width=100,
+            height=28,
+            corner_radius=10,
+            font=ctk.CTkFont(size=11, weight="bold"),
+            fg_color=THEME_BTN_SECONDARY_BG,
+            hover_color=THEME_BTN_SECONDARY_HOVER,
+            text_color=THEME_BTN_SECONDARY_TEXT,
+            command=self._clear_finished_queue
+        )
+        self.clear_queue_btn.pack(side="left", padx=(0, 6))
+
+        # Scrollable container for queue items
+        self.queue_items_frame = ctk.CTkFrame(self.queue_card, fg_color=THEME_CARD_INNER, corner_radius=14)
+        self.queue_items_frame.grid(row=1, column=0, sticky="ew", padx=16, pady=(0, 14))
+        self.queue_items_frame.grid_columnconfigure(0, weight=1)
+
+        self.empty_q_label = ctk.CTkLabel(
+            self.queue_items_frame,
+            text="No items in queue. Inspect a URL and click 'Add to Queue' or 'Download Now' to start.",
+            font=ctk.CTkFont(size=12),
+            text_color=THEME_TEXT_MUTED,
+            pady=16
+        )
+        self.empty_q_label.pack()
+
     def _create_log_drawer(self, parent):
-        self.log_card = ctk.CTkFrame(parent, fg_color=CARD_BG, corner_radius=18)
-        self.log_card.grid(row=5, column=0, sticky="ew", pady=(0, 10))
+        self.log_card = ctk.CTkFrame(parent, fg_color=THEME_CARD, corner_radius=18)
+        self.log_card.grid(row=6, column=0, sticky="ew", pady=(0, 10))
         self.log_card.grid_columnconfigure(0, weight=1)
 
         header_row = ctk.CTkFrame(self.log_card, fg_color="transparent")
@@ -457,19 +570,20 @@ class YouTubeDownloaderApp(ctk.CTk):
             header_row, 
             text="Ready to download", 
             font=ctk.CTkFont(size=12, weight="bold"),
-            text_color=TEXT_MUTED
+            text_color=THEME_TEXT_MUTED
         )
         self.status_msg_label.pack(side="left")
 
         self.toggle_log_btn = ctk.CTkButton(
             header_row, 
             text="Activity Log", 
-            width=85, 
-            height=26, 
-            corner_radius=8,
-            font=ctk.CTkFont(size=11),
-            fg_color="#262733",
-            hover_color="#343646",
+            width=90, 
+            height=28, 
+            corner_radius=10,
+            font=ctk.CTkFont(size=11, weight="bold"),
+            fg_color=THEME_BTN_SECONDARY_BG,
+            hover_color=THEME_BTN_SECONDARY_HOVER,
+            text_color=THEME_BTN_SECONDARY_TEXT,
             command=self._toggle_log
         )
         self.toggle_log_btn.pack(side="right")
@@ -477,9 +591,9 @@ class YouTubeDownloaderApp(ctk.CTk):
         self.log_textbox = ctk.CTkTextbox(
             self.log_card, 
             height=100, 
-            corner_radius=10,
-            fg_color="#101117",
-            text_color="#c0c2ce",
+            corner_radius=12,
+            fg_color=THEME_CARD_INNER,
+            text_color=THEME_TEXT_PRIMARY,
             font=ctk.CTkFont(family="Consolas", size=10),
             state="disabled"
         )
@@ -489,7 +603,7 @@ class YouTubeDownloaderApp(ctk.CTk):
     def _load_saved_preferences(self):
         saved_dir = self.config_manager.get("download_dir", os.path.expanduser("~/Downloads"))
         self.dir_entry.insert(0, saved_dir)
-        self._log("Application initialized in OLED Bento mode. Ready.")
+        self._log("Application initialized. Ready.")
 
     def _log(self, message):
         def _update():
@@ -515,6 +629,8 @@ class YouTubeDownloaderApp(ctk.CTk):
         else:
             ctk.set_appearance_mode("Dark")
             self.theme_btn.configure(text="🌙 Dark")
+        
+        self.progress_card.refresh_theme()
 
     def _paste_from_clipboard(self):
         try:
@@ -532,7 +648,7 @@ class YouTubeDownloaderApp(ctk.CTk):
         self.meta_title_label.configure(text="Paste a link above to preview video, reel, or playlist details.")
         self.meta_channel_label.configure(text="")
         self.meta_duration_label.configure(text="")
-        self.platform_badge.configure(text="READY", fg_color="#262733")
+        self.platform_badge.configure(text="READY")
         self.thumb_label.configure(image=None, text="No Media\nSelected")
         self.pl_box.grid_remove()
         self.status_msg_label.configure(text="Ready")
@@ -587,11 +703,11 @@ class YouTubeDownloaderApp(ctk.CTk):
             self.after(0, lambda: self._handle_fetch_error(str(e)))
         finally:
             self.is_fetching = False
-            self.after(0, lambda: self.fetch_btn.configure(state="normal", text="Inspect"))
+            self.after(0, lambda: self.fetch_btn.configure(state="normal", text="🔍 Inspect"))
 
     def _apply_fetched_info(self, info):
         is_playlist = info.get('type') == 'playlist'
-        platform = info.get('platform', {'name': 'Media', 'badge': '🎬 Media', 'color': '#3b82f6'})
+        platform = info.get('platform', {'name': 'Media', 'badge': '🎬 Media', 'color': '#3B82F6'})
         title = info.get('title', 'Unknown')
         uploader = info.get('uploader', 'Creator')
 
@@ -635,20 +751,7 @@ class YouTubeDownloaderApp(ctk.CTk):
         self.status_msg_label.configure(text="Failed to inspect URL.")
         messagebox.showerror("Inspection Error", f"Unable to retrieve media details:\n\n{err_msg}")
 
-    def _start_download(self):
-        url = self.url_entry.get().strip()
-        if not url:
-            messagebox.showwarning("Input Required", "Please enter a media URL.")
-            return
-
-        download_dir = self.dir_entry.get().strip()
-        if not download_dir:
-            messagebox.showwarning("Folder Required", "Please specify a save folder.")
-            return
-
-        self.config_manager.set("download_dir", download_dir)
-
-        # Parse selected format
+    def _get_current_options(self):
         fmt_choice = self.format_segment.get()
         if "MP3" in fmt_choice:
             mode = 'audio'
@@ -666,12 +769,20 @@ class YouTubeDownloaderApp(ctk.CTk):
             mode = 'video'
             quality = '720p (HD)'
             audio_format = 'mp3'
+        elif "480p" in fmt_choice:
+            mode = 'video'
+            quality = '480p (SD)'
+            audio_format = 'mp3'
+        elif "360p" in fmt_choice:
+            mode = 'video'
+            quality = '360p'
+            audio_format = 'mp3'
         else:
             mode = 'video'
             quality = '1080p (FHD)'
             audio_format = 'mp3'
 
-        options = {
+        return {
             'mode': mode,
             'quality': quality,
             'audio_format': audio_format,
@@ -683,36 +794,199 @@ class YouTubeDownloaderApp(ctk.CTk):
             'playlist_items': self.pl_range_entry.get().strip() if self.current_info and self.current_info.get('type') == 'playlist' else None
         }
 
-        # UI State update
-        self.download_btn.configure(state="disabled", text="⏳ DOWNLOADING...")
-        self.cancel_btn.configure(state="normal")
-        self.progress_card.set_progress(0, "Starting...")
-        self.speed_val_label.configure(text="0.0")
-        self.status_msg_label.configure(text="Connecting to media stream...")
+    def _add_to_queue(self):
+        url = self.url_entry.get().strip()
+        if not url:
+            messagebox.showwarning("Input Required", "Please enter a URL to add to the queue.")
+            return
 
-        self._log(f"--- Starting Download ---")
-        self._log(f"Destination: {download_dir}")
+        download_dir = self.dir_entry.get().strip()
+        if not download_dir:
+            messagebox.showwarning("Folder Required", "Please specify a save folder.")
+            return
 
-        threading.Thread(target=self._download_worker, args=(url, download_dir, options), daemon=True).start()
+        options = self._get_current_options()
+        item = QueueItem(url, self.current_info, options, download_dir)
 
-    def _download_worker(self, url, download_dir, options):
-        try:
-            success = self.core.download(
-                url=url,
-                download_dir=download_dir,
-                options=options,
-                progress_callback=self._on_download_progress,
-                status_callback=self._on_download_status
+        with self.queue_lock:
+            self.download_queue.append(item)
+
+        self._refresh_queue_ui()
+        self._log(f"Added to Queue: {item.title} ({options['quality']})")
+        messagebox.showinfo("Queue Updated", f"Added '{item.title[:40]}' to the download queue!")
+
+    def _download_now(self):
+        url = self.url_entry.get().strip()
+        if not url:
+            messagebox.showwarning("Input Required", "Please enter a URL.")
+            return
+
+        download_dir = self.dir_entry.get().strip()
+        if not download_dir:
+            messagebox.showwarning("Folder Required", "Please specify a save folder.")
+            return
+
+        self.config_manager.set("download_dir", download_dir)
+        options = self._get_current_options()
+        item = QueueItem(url, self.current_info, options, download_dir)
+
+        with self.queue_lock:
+            # If already running, insert at front or append and start
+            self.download_queue.insert(0, item)
+
+        self._refresh_queue_ui()
+        self._ensure_queue_running()
+
+    def _ensure_queue_running(self):
+        if not self.queue_running:
+            self.queue_running = True
+            self.cancel_btn.configure(state="normal")
+            self.download_btn.configure(state="disabled", text="⏳ PROCESSING QUEUE...")
+            threading.Thread(target=self._process_queue_worker, daemon=True).start()
+
+    def _process_queue_worker(self):
+        while True:
+            item = None
+            with self.queue_lock:
+                for q in self.download_queue:
+                    if q.status == "Queued":
+                        item = q
+                        break
+
+            if not item:
+                # No more pending items
+                break
+
+            self.current_queue_item = item
+            item.status = "Downloading"
+            self.after(0, self._refresh_queue_ui)
+
+            self.after(0, lambda it=item: self.status_msg_label.configure(text=f"Downloading: {it.title[:40]}..."))
+            self.after(0, lambda: self.progress_card.set_progress(0, "Starting..."))
+            self._log(f"--- Processing Queue Item: {item.title} ---")
+
+            try:
+                success = self.core.download(
+                    url=item.url,
+                    download_dir=item.save_dir,
+                    options=item.options,
+                    progress_callback=self._on_download_progress,
+                    status_callback=self._on_download_status
+                )
+                if success:
+                    item.status = "Complete"
+                    item.progress = 100.0
+                    self._log(f"✓ Completed: {item.title}")
+            except DownloadCancelledException:
+                item.status = "Cancelled"
+                self._log(f"⏹ Cancelled: {item.title}")
+            except Exception as e:
+                item.status = "Failed"
+                item.error_msg = str(e)
+                self._log(f"✕ Failed: {item.title} - {e}")
+
+            self.after(0, self._refresh_queue_ui)
+
+        # Queue finished
+        self.queue_running = False
+        self.current_queue_item = None
+        self.after(0, self._on_queue_all_finished)
+
+    def _on_queue_all_finished(self):
+        self.download_btn.configure(state="normal", text="🚀  DOWNLOAD NOW")
+        self.cancel_btn.configure(state="disabled")
+        self.progress_card.set_progress(100.0, "All Done!")
+        self.status_msg_label.configure(text="All queue items finished!")
+        self._log("=== All queue downloads finished! ===")
+
+    def _refresh_queue_ui(self):
+        # Clear existing rows in queue_items_frame
+        for widget in self.queue_items_frame.winfo_children():
+            widget.destroy()
+
+        total = len(self.download_queue)
+        queued_count = sum(1 for q in self.download_queue if q.status == "Queued")
+        active_count = sum(1 for q in self.download_queue if q.status == "Downloading")
+        done_count = sum(1 for q in self.download_queue if q.status == "Complete")
+
+        self.q_title_label.configure(
+            text=f"📥 Download Queue ({total} items • {active_count} active • {queued_count} pending • {done_count} done)"
+        )
+
+        if not self.download_queue:
+            empty_lbl = ctk.CTkLabel(
+                self.queue_items_frame,
+                text="No items in queue. Inspect a URL and click 'Add to Queue' or 'Download Now' to start.",
+                font=ctk.CTkFont(size=12),
+                text_color=THEME_TEXT_MUTED,
+                pady=16
             )
-            if success:
-                self.after(0, self._on_download_complete)
-        except DownloadCancelledException:
-            self.after(0, self._on_download_cancelled)
-        except Exception as e:
-            self._log(f"Download Error: {str(e)}")
-            self.after(0, lambda: self._on_download_failed(str(e)))
-        finally:
-            self.after(0, self._reset_download_ui)
+            empty_lbl.pack()
+            return
+
+        for idx, item in enumerate(self.download_queue):
+            row = ctk.CTkFrame(self.queue_items_frame, fg_color=THEME_CARD, corner_radius=10)
+            row.pack(fill="x", padx=8, pady=4)
+            row.grid_columnconfigure(1, weight=1)
+
+            # Platform / Status icon
+            status_colors = {
+                "Queued": ("#E2E8F0", "#262733"),
+                "Downloading": ("#2563EB", "#3B82F6"),
+                "Complete": ("#16A34A", "#22C55E"),
+                "Failed": ("#DC2626", "#EF4444"),
+                "Cancelled": ("#D97706", "#F59E0B")
+            }
+            bg_col = status_colors.get(item.status, ("#E2E8F0", "#262733"))
+
+            st_badge = ctk.CTkLabel(
+                row,
+                text=f" {item.status.upper()} ",
+                font=ctk.CTkFont(size=10, weight="bold"),
+                fg_color=bg_col,
+                text_color="#FFFFFF" if item.status in ["Downloading", "Complete", "Failed", "Cancelled"] else THEME_BTN_SECONDARY_TEXT,
+                corner_radius=6,
+                padx=6,
+                pady=2
+            )
+            st_badge.grid(row=0, column=0, padx=8, pady=8, sticky="w")
+
+            # Title & details
+            title_text = item.title[:45] + ("..." if len(item.title) > 45 else "")
+            info_lbl = ctk.CTkLabel(
+                row,
+                text=f"{item.platform['badge']}  {title_text}  •  {item.options.get('quality', 'MP4')}",
+                font=ctk.CTkFont(size=11, weight="bold"),
+                text_color=THEME_TEXT_PRIMARY,
+                anchor="w"
+            )
+            info_lbl.grid(row=0, column=1, padx=4, pady=8, sticky="w")
+
+            # Remove item button (if not currently downloading)
+            if item.status != "Downloading":
+                del_btn = ctk.CTkButton(
+                    row,
+                    text="✕",
+                    width=28,
+                    height=24,
+                    corner_radius=6,
+                    font=ctk.CTkFont(size=11, weight="bold"),
+                    fg_color=THEME_BTN_SECONDARY_BG,
+                    hover_color=THEME_BTN_SECONDARY_HOVER,
+                    text_color=THEME_BTN_SECONDARY_TEXT,
+                    command=lambda q_id=item.id: self._remove_from_queue(q_id)
+                )
+                del_btn.grid(row=0, column=2, padx=8, pady=8, sticky="e")
+
+    def _remove_from_queue(self, q_id):
+        with self.queue_lock:
+            self.download_queue = [q for q in self.download_queue if q.id != q_id]
+        self._refresh_queue_ui()
+
+    def _clear_finished_queue(self):
+        with self.queue_lock:
+            self.download_queue = [q for q in self.download_queue if q.status in ["Queued", "Downloading"]]
+        self._refresh_queue_ui()
 
     def _on_download_progress(self, data):
         def _update():
@@ -735,12 +1009,12 @@ class YouTubeDownloaderApp(ctk.CTk):
                 pl_count = data.get('playlist_count')
 
                 if pl_idx and pl_count:
-                    self.status_msg_label.configure(text=f"[{pl_idx}/{pl_count}] {filename[:40]}...")
+                    self.status_msg_label.configure(text=f"[{pl_idx}/{pl_count}] {filename[:38]}...")
                 else:
-                    self.status_msg_label.configure(text=f"Downloading: {filename[:45]}...")
+                    self.status_msg_label.configure(text=f"Downloading: {filename[:42]}...")
 
             elif status == 'processing':
-                self.progress_card.set_progress(99.0, "Processing...")
+                self.progress_card.set_progress(99.0, "Merging...")
                 self.status_msg_label.configure(text="Finalizing & Merging stream...")
 
         self.after(0, _update)
@@ -751,30 +1025,9 @@ class YouTubeDownloaderApp(ctk.CTk):
             self._log(f"[Status] {msg}")
         self.after(0, _update)
 
-    def _on_download_complete(self):
-        self.progress_card.set_progress(100.0, "Complete!")
-        self.status_msg_label.configure(text="✓ Download Complete!")
-        self._log("=== Download completed successfully! ===")
-        messagebox.showinfo("Success", "Download completed successfully!\nFiles saved to selected folder.")
-
-    def _on_download_cancelled(self):
-        self.progress_card.set_progress(0.0, "Cancelled")
-        self.status_msg_label.configure(text="Download Cancelled.")
-        self._log("Download was cancelled.")
-        messagebox.showwarning("Cancelled", "Download was cancelled.")
-
-    def _on_download_failed(self, error):
-        self.progress_card.set_progress(0.0, "Failed")
-        self.status_msg_label.configure(text="Download Failed.")
-        messagebox.showerror("Download Error", f"An error occurred during download:\n\n{error}")
-
-    def _reset_download_ui(self):
-        self.download_btn.configure(state="normal", text="🚀  START DOWNLOAD")
-        self.cancel_btn.configure(state="disabled")
-
-    def _cancel_download(self):
+    def _cancel_current_or_queue(self):
         if self.core.is_downloading:
-            self._log("Cancelling download...")
-            self.status_msg_label.configure(text="Cancelling download...")
+            self._log("Cancelling current item...")
+            self.status_msg_label.configure(text="Cancelling...")
             self.core.cancel()
             self.cancel_btn.configure(state="disabled")
