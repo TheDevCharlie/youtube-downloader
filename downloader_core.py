@@ -1,5 +1,6 @@
 import os
 import re
+import time
 import threading
 from urllib.parse import urlparse
 import yt_dlp
@@ -11,13 +12,34 @@ class DownloadCancelledException(Exception):
 class DownloaderCore:
     def __init__(self):
         self.cancel_event = threading.Event()
+        self.pause_event = threading.Event()
         self.is_downloading = False
 
     def cancel(self):
         self.cancel_event.set()
+        # If paused, resume so it immediately exits
+        self.pause_event.clear()
 
     def reset_cancel(self):
         self.cancel_event.clear()
+        self.pause_event.clear()
+
+    def pause(self):
+        self.pause_event.set()
+
+    def resume(self):
+        self.pause_event.clear()
+
+    def toggle_pause(self):
+        if self.pause_event.is_set():
+            self.resume()
+            return False
+        else:
+            self.pause()
+            return True
+
+    def is_paused(self):
+        return self.pause_event.is_set()
 
     @staticmethod
     def detect_platform(url):
@@ -143,12 +165,12 @@ class DownloaderCore:
 
     def download(self, url, download_dir, options, progress_callback=None, status_callback=None):
         """
-        Execute download with configured options and progress tracking.
+        Execute download with configured options, pause, and cancellation support.
         """
         self.reset_cancel()
         self.is_downloading = True
 
-        mode = options.get('mode', 'video')  # 'video' or 'audio'
+        mode = options.get('mode', 'video')
         quality = options.get('quality', 'Best Available')
         audio_format = options.get('audio_format', 'mp3').lower()
         audio_bitrate = options.get('audio_bitrate', '320').replace(' kbps', '')
@@ -160,12 +182,18 @@ class DownloaderCore:
 
         os.makedirs(download_dir, exist_ok=True)
 
-        def check_cancellation(d=None):
+        def check_state():
             if self.cancel_event.is_set():
                 raise DownloadCancelledException("Download was cancelled by user.")
+            
+            # Pause loop
+            while self.pause_event.is_set():
+                if self.cancel_event.is_set():
+                    raise DownloadCancelledException("Download was cancelled by user.")
+                time.sleep(0.15)
 
         def yt_hook(d):
-            check_cancellation()
+            check_state()
             if not progress_callback:
                 return
 
@@ -291,6 +319,7 @@ class DownloaderCore:
             if status_callback:
                 status_callback("Starting download...")
             
+            check_state()
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([url])
 
@@ -303,7 +332,7 @@ class DownloaderCore:
 
         except DownloadCancelledException:
             if status_callback:
-                status_callback("Download cancelled by user.")
+                status_callback("Download cancelled.")
             return False
         except Exception as e:
             if self.cancel_event.is_set():
@@ -315,3 +344,4 @@ class DownloaderCore:
             raise e
         finally:
             self.is_downloading = False
+            self.pause_event.clear()
