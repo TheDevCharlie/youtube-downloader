@@ -1,14 +1,14 @@
-# YouTube Downloader
+# Universal Media & Playlist Downloader
 
-A modern desktop application for downloading YouTube videos and playlists with custom download paths and format options.
+A modern desktop application for downloading videos, reels, and playlists from YouTube, Instagram, Twitter / X, Pinterest, TikTok, Reddit, and more with custom download paths and format options.
 
 ## Features
 
-- Download individual YouTube videos or entire playlists.
-- Support for multiple video resolutions (up to 4K) and audio-only extraction (MP3, M4A, FLAC, WAV).
-- Customizable download location with folder memory.
-- Real-time download progress, speed, and status tracking.
-- Clean and intuitive user interface with dark and light mode support.
+- **Multi-Platform Support**: Download from YouTube, Instagram Reels/Posts, Twitter / X, Pinterest, TikTok, Reddit, Facebook, and more.
+- **Single Video & Full Playlist Support**: Automatic link detection, metadata preview, and item range selection.
+- **High-Quality Formats**: 4K, 1080p, 720p (MP4), and audio extraction (MP3, WAV, FLAC).
+- **Custom Download Location**: Select any destination folder with persistent path memory and quick open.
+- **OLED Bento-Grid Dashboard**: Real-time download speed metric, circular progress ring, and activity tracking.
 
 ## Requirements
 
@@ -26,4 +26,4 @@ A modern desktop application for downloading YouTube videos and playlists with c
    ```bash
    python main.py
    ```
-   Or run `launch.bat` on Windows.
+   Or launch via `launch.bat` on Windows.

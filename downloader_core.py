@@ -1,6 +1,7 @@
 import os
 import re
 import threading
+from urllib.parse import urlparse
 import yt_dlp
 
 class DownloadCancelledException(Exception):
@@ -18,9 +19,38 @@ class DownloaderCore:
     def reset_cancel(self):
         self.cancel_event.clear()
 
+    @staticmethod
+    def detect_platform(url):
+        """
+        Identify the source platform from the URL.
+        """
+        netloc = urlparse(url).netloc.lower()
+        domain = re.sub(r'^(www\.|m\.|mobile\.)', '', netloc)
+
+        if domain in ['youtube.com', 'youtu.be'] or domain.endswith('.youtube.com'):
+            return {'name': 'YouTube', 'badge': '▶ YouTube', 'color': '#ef4444'}
+        elif domain in ['instagram.com', 'instagr.am'] or domain.endswith('.instagram.com'):
+            return {'name': 'Instagram', 'badge': '📸 Instagram', 'color': '#e1306c'}
+        elif domain in ['twitter.com', 'x.com', 't.co'] or domain.endswith('.twitter.com') or domain.endswith('.x.com'):
+            return {'name': 'Twitter / X', 'badge': '𝕏 Twitter / X', 'color': '#ffffff'}
+        elif domain in ['pinterest.com', 'pin.it'] or domain.endswith('.pinterest.com') or 'pinterest.' in domain:
+            return {'name': 'Pinterest', 'badge': '📌 Pinterest', 'color': '#e60023'}
+        elif domain in ['tiktok.com'] or domain.endswith('.tiktok.com'):
+            return {'name': 'TikTok', 'badge': '🎵 TikTok', 'color': '#00f2fe'}
+        elif domain in ['reddit.com', 'redd.it'] or domain.endswith('.reddit.com'):
+            return {'name': 'Reddit', 'badge': '🤖 Reddit', 'color': '#ff4500'}
+        elif domain in ['facebook.com', 'fb.watch', 'fb.com'] or domain.endswith('.facebook.com'):
+            return {'name': 'Facebook', 'badge': '📘 Facebook', 'color': '#1877f2'}
+        elif domain in ['vimeo.com'] or domain.endswith('.vimeo.com'):
+            return {'name': 'Vimeo', 'badge': '🎬 Vimeo', 'color': '#1ab7ea'}
+        elif domain in ['soundcloud.com'] or domain.endswith('.soundcloud.com'):
+            return {'name': 'SoundCloud', 'badge': '☁ SoundCloud', 'color': '#ff5500'}
+        else:
+            return {'name': 'Web Media', 'badge': '🌐 Universal Stream', 'color': '#3b82f6'}
+
     def fetch_info(self, url):
         """
-        Extract video or playlist information quickly without downloading.
+        Extract video or playlist information quickly across any supported platform.
         """
         ydl_opts = {
             'extract_flat': 'in_playlist',
@@ -29,6 +59,8 @@ class DownloaderCore:
             'skip_download': True,
         }
         
+        platform = self.detect_platform(url)
+
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
@@ -41,7 +73,6 @@ class DownloaderCore:
                     entries = list(info.get('entries', []))
                     valid_entries = [e for e in entries if e is not None]
                     
-                    # Grab thumbnail from first entry if playlist has no thumbnail
                     thumb = info.get('thumbnail')
                     if not thumb and valid_entries:
                         thumb = valid_entries[0].get('thumbnail') or (
@@ -51,13 +82,14 @@ class DownloaderCore:
 
                     return {
                         'type': 'playlist',
-                        'title': info.get('title', 'Unknown Playlist'),
-                        'uploader': info.get('uploader') or info.get('channel') or 'Various Artists / Creators',
+                        'platform': platform,
+                        'title': info.get('title', f"{platform['name']} Playlist"),
+                        'uploader': info.get('uploader') or info.get('channel') or info.get('uploader_id') or 'Creator',
                         'item_count': len(valid_entries),
                         'thumbnail': thumb,
                         'entries': [
                             {
-                                'title': e.get('title', f'Video {i+1}'),
+                                'title': e.get('title', f'Item {i+1}'),
                                 'url': e.get('url') or e.get('webpage_url') or f"https://www.youtube.com/watch?v={e.get('id')}",
                                 'duration': e.get('duration'),
                                 'id': e.get('id')
@@ -67,16 +99,19 @@ class DownloaderCore:
                     }
                 else:
                     duration = info.get('duration')
-                    duration_str = self.format_duration(duration) if duration else "Live / Unknown"
+                    duration_str = self.format_duration(duration) if duration else "Clip / Reel"
                     
                     thumb = info.get('thumbnail')
                     if not thumb and info.get('thumbnails'):
                         thumb = info.get('thumbnails')[-1]['url']
                         
+                    title = info.get('title') or info.get('description', 'Media Download')[:60] or f"{platform['name']} Media"
+
                     return {
                         'type': 'video',
-                        'title': info.get('title', 'Unknown Title'),
-                        'uploader': info.get('uploader') or info.get('channel') or 'Unknown Channel',
+                        'platform': platform,
+                        'title': title.strip(),
+                        'uploader': info.get('uploader') or info.get('channel') or info.get('uploader_id') or platform['name'],
                         'duration': duration_str,
                         'duration_seconds': duration,
                         'thumbnail': thumb,
@@ -84,7 +119,7 @@ class DownloaderCore:
                         'upload_date': info.get('upload_date', '')
                     }
         except Exception as e:
-            raise RuntimeError(f"Failed to fetch info: {str(e)}")
+            raise RuntimeError(f"Failed to fetch {platform['name']} info: {str(e)}")
 
     @staticmethod
     def format_duration(seconds):
@@ -121,7 +156,7 @@ class DownloaderCore:
         number_items = options.get('number_playlist_items', True)
         embed_subtitles = options.get('embed_subtitles', False)
         embed_thumbnail = options.get('embed_thumbnail', True)
-        playlist_items = options.get('playlist_items', None) # e.g. "1-5,8,11-13"
+        playlist_items = options.get('playlist_items', None)
 
         os.makedirs(download_dir, exist_ok=True)
 
@@ -162,7 +197,6 @@ class DownloaderCore:
                     eta = d.get('eta')
                     eta_str = f"{eta}s" if eta else "N/A"
 
-                # Playlist info
                 playlist_index = d.get('playlist_index')
                 playlist_count = d.get('playlist_count') or d.get('n_entries')
 
@@ -185,10 +219,9 @@ class DownloaderCore:
                 progress_callback({
                     'status': 'processing',
                     'filename': os.path.basename(d.get('filename', '')),
-                    'message': 'Converting / Merging streams...'
+                    'message': 'Converting / Finalizing file...'
                 })
 
-        # Base YDL options
         ydl_opts = {
             'outtmpl': {},
             'progress_hooks': [yt_hook],
@@ -199,10 +232,9 @@ class DownloaderCore:
             'windowsfilenames': True,
         }
 
-        # Build output template
         prefix = "%(playlist_index)02d - " if number_items else ""
         if create_subfolder:
-            out_tmpl_default = os.path.join(download_dir, "%(playlist_title,uploader|Single Videos)s", f"{prefix}%(title)s.%(ext)s")
+            out_tmpl_default = os.path.join(download_dir, "%(playlist_title,extractor_key|Downloads)s", f"{prefix}%(title)s.%(ext)s")
         else:
             out_tmpl_default = os.path.join(download_dir, f"{prefix}%(title)s.%(ext)s")
         
@@ -211,7 +243,6 @@ class DownloaderCore:
         if playlist_items:
             ydl_opts['playlist_items'] = str(playlist_items)
 
-        # Quality & format selection
         if mode == 'audio':
             ydl_opts['format'] = 'bestaudio/best'
             postprocessors = [
@@ -228,7 +259,6 @@ class DownloaderCore:
             ydl_opts['postprocessors'] = postprocessors
             ydl_opts['writethumbnail'] = embed_thumbnail
         else:
-            # Video mode
             quality_map = {
                 'Best Available': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best',
                 '4K (2160p)': 'bestvideo[height<=2160][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=2160]+bestaudio/best[height<=2160]',
