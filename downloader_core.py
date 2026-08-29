@@ -17,7 +17,6 @@ class DownloaderCore:
 
     def cancel(self):
         self.cancel_event.set()
-        # If paused, resume so it immediately exits
         self.pause_event.clear()
 
     def reset_cancel(self):
@@ -57,7 +56,7 @@ class DownloaderCore:
             return {'name': 'Twitter / X', 'badge': '𝕏 Twitter / X', 'color': '#ffffff'}
         elif domain in ['pinterest.com', 'pin.it'] or domain.endswith('.pinterest.com') or 'pinterest.' in domain:
             return {'name': 'Pinterest', 'badge': '📌 Pinterest', 'color': '#e60023'}
-        elif domain in ['tiktok.com'] or domain.endswith('.tiktok.com'):
+        elif any(t in domain for t in ['tiktok.com', 'vm.tiktok.com', 'vt.tiktok.com', 'tiktokv.com']):
             return {'name': 'TikTok', 'badge': '🎵 TikTok', 'color': '#00f2fe'}
         elif domain in ['reddit.com', 'redd.it'] or domain.endswith('.reddit.com'):
             return {'name': 'Reddit', 'badge': '🤖 Reddit', 'color': '#ff4500'}
@@ -70,18 +69,29 @@ class DownloaderCore:
         else:
             return {'name': 'Web Media', 'badge': '🌐 Universal Stream', 'color': '#3b82f6'}
 
+    @staticmethod
+    def get_universal_headers():
+        return {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Sec-Fetch-Mode': 'navigate',
+        }
+
     def fetch_info(self, url):
         """
-        Extract video or playlist information quickly across any supported platform.
+        Extract video or playlist information quickly across any supported platform including TikTok.
         """
+        platform = self.detect_platform(url)
+
         ydl_opts = {
-            'extract_flat': 'in_playlist',
+            'extract_flat': 'in_playlist' if platform['name'] == 'YouTube' else False,
             'quiet': True,
             'no_warnings': True,
             'skip_download': True,
+            'http_headers': self.get_universal_headers(),
+            'nocheckcertificate': True,
         }
-        
-        platform = self.detect_platform(url)
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -111,10 +121,13 @@ class DownloaderCore:
                         'thumbnail': thumb,
                         'entries': [
                             {
+                                'index': i + 1,
                                 'title': e.get('title', f'Item {i+1}'),
-                                'url': e.get('url') or e.get('webpage_url') or f"https://www.youtube.com/watch?v={e.get('id')}",
-                                'duration': e.get('duration'),
-                                'id': e.get('id')
+                                'url': e.get('url') or e.get('webpage_url') or (f"https://www.youtube.com/watch?v={e.get('id')}" if e.get('id') else url),
+                                'duration': self.format_duration(e.get('duration')) if e.get('duration') else "",
+                                'id': e.get('id', str(i+1)),
+                                'status': 'Queued',
+                                'percent': 0.0
                             }
                             for i, e in enumerate(valid_entries)
                         ]
@@ -186,7 +199,6 @@ class DownloaderCore:
             if self.cancel_event.is_set():
                 raise DownloadCancelledException("Download was cancelled by user.")
             
-            # Pause loop
             while self.pause_event.is_set():
                 if self.cancel_event.is_set():
                     raise DownloadCancelledException("Download was cancelled by user.")
@@ -247,6 +259,8 @@ class DownloaderCore:
                 progress_callback({
                     'status': 'processing',
                     'filename': os.path.basename(d.get('filename', '')),
+                    'playlist_index': d.get('playlist_index'),
+                    'playlist_count': d.get('playlist_count') or d.get('n_entries'),
                     'message': 'Converting / Finalizing file...'
                 })
 
@@ -258,6 +272,7 @@ class DownloaderCore:
             'no_warnings': False,
             'quiet': False,
             'windowsfilenames': True,
+            'http_headers': self.get_universal_headers(),
         }
 
         prefix = "%(playlist_index)02d - " if number_items else ""
@@ -287,14 +302,15 @@ class DownloaderCore:
             ydl_opts['postprocessors'] = postprocessors
             ydl_opts['writethumbnail'] = embed_thumbnail
         else:
+            # Enhanced format fallbacks for TikTok, YouTube, Instagram, Twitter
             quality_map = {
                 'Best Available': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best',
-                '4K (2160p)': 'bestvideo[height<=2160][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=2160]+bestaudio/best[height<=2160]',
-                '1440p (2K)': 'bestvideo[height<=1440][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1440]+bestaudio/best[height<=1440]',
-                '1080p (FHD)': 'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[height<=1080]',
-                '720p (HD)': 'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=720]+bestaudio/best[height<=720]',
-                '480p (SD)': 'bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=480]+bestaudio/best[height<=480]',
-                '360p': 'bestvideo[height<=360][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=360]+bestaudio/best[height<=360]',
+                '4K (2160p)': 'bestvideo[height<=2160][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=2160]+bestaudio/best[height<=2160]/best',
+                '1440p (2K)': 'bestvideo[height<=1440][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1440]+bestaudio/best[height<=1440]/best',
+                '1080p (FHD)': 'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best',
+                '720p (HD)': 'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=720]+bestaudio/best[height<=720]/best',
+                '480p (SD)': 'bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=480]+bestaudio/best[height<=480]/best',
+                '360p': 'bestvideo[height<=360][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=360]+bestaudio/best[height<=360]/best',
             }
             selected_fmt = quality_map.get(quality, 'bestvideo+bestaudio/best')
             ydl_opts['format'] = selected_fmt
