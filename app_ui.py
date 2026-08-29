@@ -159,7 +159,7 @@ class YouTubeDownloaderApp(ctk.CTk):
         )
         title_lbl.pack(side="left")
 
-        # Theme toggle on right
+        # Theme toggle on right using grid
         self.theme_btn = ctk.CTkButton(
             header_frame,
             text="🌙 Dark",
@@ -172,7 +172,7 @@ class YouTubeDownloaderApp(ctk.CTk):
             font=ctk.CTkFont(size=12, weight="bold"),
             command=self._cycle_theme
         )
-        self.theme_btn.pack(side="right")
+        self.theme_btn.grid(row=0, column=1, sticky="e")
 
     def _create_url_capsule(self, parent):
         url_card = ctk.CTkFrame(
