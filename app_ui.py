@@ -23,7 +23,7 @@ THEME_CARD = ("#FFFFFF", "#181922")
 THEME_CARD_INNER = ("#F8F9FB", "#12131A")
 THEME_BORDER = ("#E2E4E9", "#262733")
 
-# High-Contrast Text: Deep Black in Light mode, Pure White in Dark mode
+# High-Contrast Text
 THEME_TEXT_PRIMARY = ("#0F172A", "#FFFFFF")
 THEME_TEXT_MUTED = ("#64748B", "#8A8C98")
 
@@ -45,9 +45,7 @@ def generate_play_icon():
     """Generate a clean play button icon image."""
     img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
-    # Circle background
     draw.ellipse([4, 4, 60, 60], fill=(24, 25, 34, 255))
-    # Play triangle
     draw.polygon([(26, 18), (26, 46), (46, 32)], fill=(255, 255, 255, 255))
     return img
 
@@ -80,11 +78,11 @@ class YouTubeDownloaderApp(ctk.CTk):
         super().__init__()
 
         self.title("Universal Media & Playlist Downloader Pro")
-        self.geometry("1020x940")
-        self.minsize(540, 680)
+        self.geometry("1040x960")
+        self.minsize(560, 700)
         self.configure(fg_color=THEME_BG)
 
-        # Set Window Title Bar / Tab Icon
+        # Set Window Title Bar & Taskbar Icon
         try:
             icon_img = generate_play_icon()
             self._icon_photo = ImageTk.PhotoImage(icon_img)
@@ -105,15 +103,17 @@ class YouTubeDownloaderApp(ctk.CTk):
         self.queue_lock = threading.Lock()
         self.queue_running = False
 
-        # Responsive Layout State
+        # Layout & Performance variables
         self.is_mobile_view = False
-        self._last_resize_width = 1020
+        self._resize_timer = None
+        self._bg_photo = None
+        self._last_bg_mode = None
 
         # Setup UI
         self._setup_ui()
         self._load_saved_preferences()
 
-        # Bind window resize for responsive layout & grid redraw
+        # Bind resize with debouncing for fluid performance
         self.bind("<Configure>", self._on_window_configure)
 
     def _setup_ui(self):
@@ -129,40 +129,72 @@ class YouTubeDownloaderApp(ctk.CTk):
         self.scroll_frame.grid(row=0, column=0, sticky="nsew", padx=16, pady=12)
         self.scroll_frame.grid_columnconfigure(0, weight=1)
 
-        # 1. Header Bar (Clean title, theme toggle on right)
+        # 1. Header Bar
         self._create_header(self.scroll_frame)
 
         # 2. URL Input Capsule
         self._create_url_capsule(self.scroll_frame)
 
-        # 3. Bento Grid Container (Adapts between Desktop 3-column and Mobile stacked)
+        # 3. Bento Grid Container (Adaptive Desktop vs Mobile)
         self._create_bento_grid(self.scroll_frame)
 
-        # 4. Playlist Itemized Live Tracker & Progress Bars
+        # 4. Playlist Itemized Tracker
         self._create_playlist_tracker(self.scroll_frame)
 
-        # 5. Settings Split Cards (Storage Location & Quality Segment)
+        # 5. Settings Split Cards (Folder & Quality)
         self._create_bottom_split_cards(self.scroll_frame)
 
-        # 6. Action Bar (Download Now, Add to Queue, Pause, Cancel)
+        # 6. Action Bar
         self._create_action_bar(self.scroll_frame)
 
-        # 7. Separated Active Download & Queued Items Sections
+        # 7. Separated Active Download & Queue Sections
         self._create_active_download_section(self.scroll_frame)
         self._create_queue_section(self.scroll_frame)
 
         # 8. Collapsible Activity Log Drawer
         self._create_log_drawer(self.scroll_frame)
 
-        # Schedule initial background grid drawing
-        self.after(100, self._draw_grid_background)
+        # Render seamless background grid
+        self.after(50, self._render_tear_free_grid_background)
+
+    def _render_tear_free_grid_background(self):
+        """
+        Renders a seamless, tear-free, full-canvas background dot grid using hardware-accelerated image blitting.
+        This completely eliminates screen tearing and lag when scrolling fast!
+        """
+        try:
+            canvas = self.scroll_frame._parent_canvas
+            mode = ctk.get_appearance_mode()
+
+            if self._bg_photo and self._last_bg_mode == mode:
+                return
+
+            self._last_bg_mode = mode
+            tile_size = 28
+            dot_color = (36, 38, 50, 255) if mode == "Dark" else (210, 214, 224, 255)
+            bg_color = (11, 12, 14, 255) if mode == "Dark" else (240, 242, 245, 255)
+
+            # Generate tiled image
+            full_w, full_h = 2400, 3600
+            pattern_img = Image.new("RGBA", (full_w, full_h), bg_color)
+            draw = ImageDraw.Draw(pattern_img)
+
+            for x in range(14, full_w, tile_size):
+                for y in range(14, full_h, tile_size):
+                    draw.ellipse([x - 1.5, y - 1.5, x + 1.5, y + 1.5], fill=dot_color)
+
+            self._bg_photo = ImageTk.PhotoImage(pattern_img)
+            canvas.delete("bg_pattern")
+            canvas.create_image(0, 0, image=self._bg_photo, anchor="nw", tags="bg_pattern")
+            canvas.tag_lower("bg_pattern")
+        except Exception as e:
+            print(f"Grid render note: {e}")
 
     def _create_header(self, parent):
         header_frame = ctk.CTkFrame(parent, fg_color="transparent")
         header_frame.grid(row=0, column=0, sticky="ew", pady=(0, 14))
         header_frame.grid_columnconfigure(0, weight=1)
 
-        # Clean "Downloader" Title
         title_lbl = ctk.CTkLabel(
             header_frame,
             text="Downloader",
@@ -171,7 +203,6 @@ class YouTubeDownloaderApp(ctk.CTk):
         )
         title_lbl.grid(row=0, column=0, sticky="w")
 
-        # Theme toggle on right
         self.theme_btn = ctk.CTkButton(
             header_frame,
             text="🌙 Dark",
@@ -197,12 +228,12 @@ class YouTubeDownloaderApp(ctk.CTk):
         url_card.grid(row=1, column=0, sticky="ew", pady=(0, 14))
         url_card.grid_columnconfigure(0, weight=1)
 
-        self.url_inner = ctk.CTkFrame(url_card, fg_color="transparent")
-        self.url_inner.pack(fill="x", padx=14, pady=10)
-        self.url_inner.grid_columnconfigure(0, weight=1)
+        inner = ctk.CTkFrame(url_card, fg_color="transparent")
+        inner.pack(fill="x", padx=14, pady=10)
+        inner.grid_columnconfigure(0, weight=1)
 
         self.url_entry = ctk.CTkEntry(
-            self.url_inner,
+            inner,
             placeholder_text="Enter or paste YouTube, TikTok, Instagram, Twitter, Pinterest URL...",
             height=40,
             corner_radius=12,
@@ -215,11 +246,11 @@ class YouTubeDownloaderApp(ctk.CTk):
         self.url_entry.grid(row=0, column=0, sticky="ew", padx=(0, 10))
         self.url_entry.bind("<Return>", lambda e: self._on_fetch_clicked())
 
-        self.url_btn_box = ctk.CTkFrame(self.url_inner, fg_color="transparent")
-        self.url_btn_box.grid(row=0, column=1, sticky="e")
+        btn_box = ctk.CTkFrame(inner, fg_color="transparent")
+        btn_box.grid(row=0, column=1, sticky="e")
 
         self.paste_btn = ctk.CTkButton(
-            self.url_btn_box,
+            btn_box,
             text="📋 Paste",
             width=80,
             height=36,
@@ -233,7 +264,7 @@ class YouTubeDownloaderApp(ctk.CTk):
         self.paste_btn.pack(side="left", padx=(0, 6))
 
         self.fetch_btn = ctk.CTkButton(
-            self.url_btn_box,
+            btn_box,
             text="🔍 Inspect",
             width=90,
             height=36,
@@ -247,7 +278,7 @@ class YouTubeDownloaderApp(ctk.CTk):
         self.fetch_btn.pack(side="left", padx=(0, 6))
 
         self.clear_btn = ctk.CTkButton(
-            self.url_btn_box,
+            btn_box,
             text="✕",
             width=36,
             height=36,
@@ -273,11 +304,9 @@ class YouTubeDownloaderApp(ctk.CTk):
             fg_color=THEME_CARD, 
             corner_radius=16, 
             border_width=1,
-            border_color=THEME_BORDER,
-            height=210
+            border_color=THEME_BORDER
         )
         self.preview_card.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
-        self.preview_card.grid_propagate(False)
         self.preview_card.grid_columnconfigure(1, weight=1)
 
         # Thumbnail
@@ -321,7 +350,7 @@ class YouTubeDownloaderApp(ctk.CTk):
         )
         self.meta_duration_label.pack(side="left")
 
-        # Title
+        # Title (Wrapping without overlapping)
         self.meta_title_label = ctk.CTkLabel(
             meta_box,
             text="Paste a link above to inspect video or playlist details.",
@@ -329,7 +358,7 @@ class YouTubeDownloaderApp(ctk.CTk):
             text_color=THEME_TEXT_PRIMARY,
             anchor="w",
             justify="left",
-            wraplength=240
+            wraplength=300
         )
         self.meta_title_label.pack(fill="x", anchor="w", pady=(2, 2))
 
@@ -375,19 +404,17 @@ class YouTubeDownloaderApp(ctk.CTk):
             fg_color=THEME_CARD, 
             corner_radius=16, 
             border_width=1,
-            border_color=THEME_BORDER,
-            height=210
+            border_color=THEME_BORDER
         )
         self.speed_card.grid(row=0, column=1, sticky="nsew", padx=(0, 12))
-        self.speed_card.grid_propagate(False)
 
         speed_inner = ctk.CTkFrame(self.speed_card, fg_color="transparent")
-        speed_inner.pack(expand=True, padx=14, pady=14)
+        speed_inner.pack(expand=True, fill="both", padx=14, pady=16)
 
         self.speed_val_label = ctk.CTkLabel(
             speed_inner,
             text="0.0",
-            font=ctk.CTkFont(size=44, weight="bold"),
+            font=ctk.CTkFont(size=42, weight="bold"),
             text_color=THEME_TEXT_PRIMARY
         )
         self.speed_val_label.pack(anchor="center")
@@ -398,7 +425,7 @@ class YouTubeDownloaderApp(ctk.CTk):
             font=ctk.CTkFont(size=13, weight="bold"),
             text_color=THEME_TEXT_MUTED
         )
-        self.speed_unit_label.pack(anchor="center", pady=(0, 6))
+        self.speed_unit_label.pack(anchor="center", pady=(0, 4))
 
         self.size_detail_label = ctk.CTkLabel(
             speed_inner,
@@ -426,7 +453,7 @@ class YouTubeDownloaderApp(ctk.CTk):
         )
         self.playlist_track_card.grid(row=3, column=0, sticky="ew", pady=(0, 14))
         self.playlist_track_card.grid_columnconfigure(0, weight=1)
-        self.playlist_track_card.grid_remove() # Shown when playlist is loaded/downloading
+        self.playlist_track_card.grid_remove()
 
         header = ctk.CTkFrame(self.playlist_track_card, fg_color="transparent")
         header.pack(fill="x", padx=16, pady=(12, 6))
@@ -439,10 +466,9 @@ class YouTubeDownloaderApp(ctk.CTk):
         )
         self.pl_track_title.pack(side="left")
 
-        # Scrollable container for playlist items
         self.pl_items_container = ctk.CTkScrollableFrame(
             self.playlist_track_card,
-            height=140,
+            height=150,
             fg_color=THEME_CARD_INNER,
             corner_radius=12
         )
@@ -766,81 +792,64 @@ class YouTubeDownloaderApp(ctk.CTk):
         self.log_textbox.grid(row=1, column=0, sticky="nsew", padx=16, pady=(0, 12))
         self.log_visible = True
 
-    def _draw_grid_background(self):
-        """Draws subtle monochrome dots directly onto the scroll frame's canvas."""
+    def _on_window_configure(self, event):
+        """Debounced responsive layout updater to guarantee fast, lag-free UI transitions."""
+        if self._resize_timer:
+            self.after_cancel(self._resize_timer)
+        self._resize_timer = self.after(60, self._process_window_resize)
+
+    def _process_window_resize(self):
         try:
-            canvas = self.scroll_frame._parent_canvas
-            canvas.delete("grid_dot")
-            w = max(canvas.winfo_width(), 1600)
-            h = max(canvas.winfo_height(), 2000)
+            w = self.winfo_width()
+            h = self.winfo_height()
 
-            mode = ctk.get_appearance_mode()
-            dot_color = "#222430" if mode == "Dark" else "#D4D7E0"
-
-            spacing = 28
-            for x in range(14, w, spacing):
-                for y in range(14, h, spacing):
-                    canvas.create_oval(
-                        x - 1.5, y - 1.5, x + 1.5, y + 1.5,
-                        fill=dot_color,
-                        outline=dot_color,
-                        tags="grid_dot"
-                    )
-            canvas.tag_lower("grid_dot")
+            # Responsive Phone vs Desktop trigger
+            is_phone = (w < 820) or (h > w * 1.15 and w < 900)
+            if is_phone != self.is_mobile_view:
+                self.is_mobile_view = is_phone
+                self._apply_responsive_layout(is_phone)
         except Exception:
             pass
 
-    def _on_window_configure(self, event):
-        """Handles responsive view switching (Mobile Phone vs Desktop) and background grid update."""
-        w = self.winfo_width()
-        h = self.winfo_height()
-
-        # Responsive Phone vs Desktop View trigger
-        is_phone = (w < 840) or (h > w * 1.15 and w < 920)
-        if is_phone != self.is_mobile_view:
-            self.is_mobile_view = is_phone
-            self._apply_responsive_layout(is_phone)
-
-        # Redraw grid periodically if width changed significantly
-        if abs(w - self._last_resize_width) > 50:
-            self._last_resize_width = w
-            self._draw_grid_background()
-
     def _apply_responsive_layout(self, is_phone):
-        """Transitions seamlessly between Desktop 3-column and Phone stacked layouts."""
+        """Transitions cleanly between Desktop side-by-side and Phone stacked layouts without overlap."""
         if is_phone:
-            # Phone View: Stacked vertical bento cards
+            # Mobile Phone View: Clean vertical flow
             self.bento_container.grid_columnconfigure(0, weight=1)
             self.bento_container.grid_columnconfigure(1, weight=1)
             self.bento_container.grid_columnconfigure(2, weight=0)
 
             self.preview_card.grid(row=0, column=0, columnspan=2, sticky="ew", padx=0, pady=(0, 10))
-            self.speed_card.grid(row=1, column=0, sticky="ew", padx=(0, 6), pady=(0, 10))
-            self.progress_card.grid(row=1, column=1, sticky="ew", padx=(6, 0), pady=(0, 10))
+            self.meta_title_label.configure(wraplength=380)
+
+            self.speed_card.grid(row=1, column=0, sticky="nsew", padx=(0, 6), pady=(0, 10))
+            self.progress_card.grid(row=1, column=1, sticky="nsew", padx=(6, 0), pady=(0, 10))
 
             self.split_container.grid_columnconfigure(0, weight=1)
-            self.split_container.grid_columnconfigure(1, weight=1)
+            self.split_container.grid_columnconfigure(1, weight=0)
             self.folder_card.grid(row=0, column=0, columnspan=2, sticky="ew", padx=0, pady=(0, 10))
-            self.format_card.grid(row=1, column=0, columnspan=2, sticky="ew", padx=0)
+            self.format_card.grid(row=1, column=0, columnspan=2, sticky="ew", padx=0, pady=0)
         else:
-            # Desktop View: Wide side-by-side bento layout
+            # Desktop Wide View: Sleek 3-column Bento layout
             self.bento_container.grid_columnconfigure(0, weight=3)
             self.bento_container.grid_columnconfigure(1, weight=2)
             self.bento_container.grid_columnconfigure(2, weight=2)
 
-            self.preview_card.grid(row=0, column=0, sticky="nsew", padx=(0, 12), pady=0)
-            self.speed_card.grid(row=0, column=1, sticky="nsew", padx=(0, 12), pady=0)
-            self.progress_card.grid(row=0, column=2, sticky="nsew", padx=0, pady=0)
+            self.preview_card.grid(row=0, column=0, columnspan=1, sticky="nsew", padx=(0, 12), pady=0)
+            self.meta_title_label.configure(wraplength=300)
+
+            self.speed_card.grid(row=0, column=1, columnspan=1, sticky="nsew", padx=(0, 12), pady=0)
+            self.progress_card.grid(row=0, column=2, columnspan=1, sticky="nsew", padx=0, pady=0)
 
             self.split_container.grid_columnconfigure(0, weight=3)
             self.split_container.grid_columnconfigure(1, weight=4)
-            self.folder_card.grid(row=0, column=0, sticky="ew", padx=(0, 12), pady=0)
-            self.format_card.grid(row=0, column=1, sticky="ew", padx=0, pady=0)
+            self.folder_card.grid(row=0, column=0, columnspan=1, sticky="ew", padx=(0, 12), pady=0)
+            self.format_card.grid(row=0, column=1, columnspan=1, sticky="ew", padx=0, pady=0)
 
     def _load_saved_preferences(self):
         saved_dir = self.config_manager.get("download_dir", os.path.expanduser("~/Downloads"))
         self.dir_entry.insert(0, saved_dir)
-        self._log("Application initialized. Ready.")
+        self._log("Application ready.")
 
     def _log(self, message):
         def _update():
@@ -868,7 +877,7 @@ class YouTubeDownloaderApp(ctk.CTk):
             self.theme_btn.configure(text="🌙 Dark")
         
         self.progress_card.refresh_theme()
-        self._draw_grid_background()
+        self._render_tear_free_grid_background()
 
     def _paste_from_clipboard(self):
         try:
@@ -976,7 +985,6 @@ class YouTubeDownloaderApp(ctk.CTk):
             threading.Thread(target=self._load_thumbnail_worker, args=(thumb_url,), daemon=True).start()
 
     def _populate_playlist_tracker(self, entries):
-        """Builds an itemized checklist with progress bars for every video in the playlist."""
         for widget in self.pl_items_container.winfo_children():
             widget.destroy()
 
@@ -1000,14 +1008,13 @@ class YouTubeDownloaderApp(ctk.CTk):
 
             t_lbl = ctk.CTkLabel(
                 row, 
-                text=e.get('title', f'Item {idx}')[:42], 
+                text=e.get('title', f'Item {idx}')[:45], 
                 font=ctk.CTkFont(size=11, weight="bold"), 
                 text_color=THEME_TEXT_PRIMARY, 
                 anchor="w"
             )
             t_lbl.grid(row=0, column=1, padx=4, pady=4, sticky="w")
 
-            # Progress Bar for this playlist item
             pbar = ctk.CTkProgressBar(row, height=8, width=110)
             pbar.set(0.0)
             pbar.grid(row=0, column=2, padx=8, pady=4)
@@ -1337,7 +1344,6 @@ class YouTubeDownloaderApp(ctk.CTk):
             )
             info_lbl.grid(row=0, column=1, padx=4, pady=6, sticky="w")
 
-            # Remove single item button
             del_btn = ctk.CTkButton(
                 row,
                 text="✕",
@@ -1359,14 +1365,12 @@ class YouTubeDownloaderApp(ctk.CTk):
         self._refresh_queue_ui()
 
     def _clear_queued_items(self):
-        """Clears only pending items waiting in queue without touching the active download."""
         with self.queue_lock:
             self.queued_items.clear()
         self._refresh_queue_ui()
         self._log("Pending queued items cleared.")
 
     def _clear_finished_items(self):
-        """Clears completed/failed/cancelled history without touching active or pending downloads."""
         with self.queue_lock:
             self.completed_items.clear()
         self._refresh_queue_ui()
