@@ -14,6 +14,7 @@ class DownloaderCore:
         self.cancel_event = threading.Event()
         self.pause_event = threading.Event()
         self.is_downloading = False
+        self._last_progress_time = 0.0
 
     def cancel(self):
         self.cancel_event.set()
@@ -80,7 +81,7 @@ class DownloaderCore:
 
     def fetch_info(self, url):
         """
-        Extract video or playlist information quickly across any supported platform including TikTok.
+        Extract video or playlist information quickly across any supported platform.
         """
         platform = self.detect_platform(url)
 
@@ -178,10 +179,11 @@ class DownloaderCore:
 
     def download(self, url, download_dir, options, progress_callback=None, status_callback=None):
         """
-        Execute download with configured options, pause, and cancellation support.
+        Execute download with configured options, pause, cancellation support, and throttled UI updates.
         """
         self.reset_cancel()
         self.is_downloading = True
+        self._last_progress_time = 0.0
 
         mode = options.get('mode', 'video')
         quality = options.get('quality', 'Best Available')
@@ -202,7 +204,7 @@ class DownloaderCore:
             while self.pause_event.is_set():
                 if self.cancel_event.is_set():
                     raise DownloadCancelledException("Download was cancelled by user.")
-                time.sleep(0.15)
+                time.sleep(0.12)
 
         def yt_hook(d):
             check_state()
@@ -211,6 +213,12 @@ class DownloaderCore:
 
             status = d.get('status')
             if status == 'downloading':
+                now = time.time()
+                # Throttle progress callbacks to ~15 Hz (every 65ms) to keep UI snappy on lower-end devices
+                if now - self._last_progress_time < 0.065:
+                    return
+                self._last_progress_time = now
+
                 total = d.get('total_bytes') or d.get('total_bytes_estimate') or 0
                 downloaded = d.get('downloaded_bytes') or 0
                 percent = 0.0
@@ -302,7 +310,6 @@ class DownloaderCore:
             ydl_opts['postprocessors'] = postprocessors
             ydl_opts['writethumbnail'] = embed_thumbnail
         else:
-            # Enhanced format fallbacks for TikTok, YouTube, Instagram, Twitter
             quality_map = {
                 'Best Available': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best',
                 '4K (2160p)': 'bestvideo[height<=2160][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=2160]+bestaudio/best[height<=2160]/best',

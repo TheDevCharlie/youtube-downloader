@@ -5,8 +5,10 @@ class CircularProgressRing(ctk.CTkFrame):
     def __init__(self, master, size=130, ring_width=8, **kwargs):
         super().__init__(
             master, 
-            fg_color=("#FFFFFF", "#181922"), 
-            corner_radius=18, 
+            fg_color=("#F5F6F8", "#181922"), 
+            corner_radius=16, 
+            border_width=1,
+            border_color=("#D3D6DC", "#262733"),
             **kwargs
         )
         
@@ -14,13 +16,13 @@ class CircularProgressRing(ctk.CTkFrame):
         self.ring_width = ring_width
         self.percentage = 0.0
 
-        # Colors for light & dark
+        # Non-blinding soft light palette & OLED dark palette
         self.colors = {
             "Light": {
-                "bg": "#FFFFFF",
-                "track": "#E2E4E9",
-                "progress": "#0F172A",
-                "text": "#0F172A",
+                "bg": "#F5F6F8",
+                "track": "#DCE0E6",
+                "progress": "#1E293B",
+                "text": "#1E293B",
                 "sub": "#64748B"
             },
             "Dark": {
@@ -32,7 +34,6 @@ class CircularProgressRing(ctk.CTkFrame):
             }
         }
 
-        # Canvas for drawing the ring
         mode = ctk.get_appearance_mode()
         current_theme = self.colors.get(mode, self.colors["Dark"])
 
@@ -43,7 +44,7 @@ class CircularProgressRing(ctk.CTkFrame):
             bg=current_theme["bg"],
             highlightthickness=0
         )
-        self.canvas.pack(expand=True, pady=(8, 2))
+        self.canvas.pack(expand=True, pady=(6, 2))
 
         self.sub_label = ctk.CTkLabel(
             self,
@@ -88,7 +89,6 @@ class CircularProgressRing(ctk.CTkFrame):
                 style=tk.ARC
             )
 
-        # Center percentage text
         center_x = self.size / 2
         center_y = self.size / 2
         pct_text = f"{int(self.percentage)}%" if self.percentage.is_integer() else f"{self.percentage:.1f}%"

@@ -17,24 +17,24 @@ from circular_progress import CircularProgressRing
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("blue")
 
-# Theme Palette Tuples (Light Mode, Dark Mode)
-THEME_BG = ("#F0F2F5", "#0B0C0E")
-THEME_CARD = ("#FFFFFF", "#181922")
-THEME_CARD_INNER = ("#F8F9FB", "#12131A")
-THEME_BORDER = ("#E2E4E9", "#262733")
+# Non-Blinding Warm Light Mode Palette & Pitch Black Dark Mode
+THEME_BG = ("#EBECEF", "#0B0C0E")
+THEME_CARD = ("#F5F6F8", "#181922")
+THEME_CARD_INNER = ("#E4E6EB", "#12131A")
+THEME_BORDER = ("#D3D6DC", "#262733")
 
-# High-Contrast Text
-THEME_TEXT_PRIMARY = ("#0F172A", "#FFFFFF")
+# Soft High-Contrast Text (Gentle on the eyes, not blinding)
+THEME_TEXT_PRIMARY = ("#1E293B", "#FFFFFF")
 THEME_TEXT_MUTED = ("#64748B", "#8A8C98")
 
 # Button Styling
-THEME_BTN_PRIMARY_BG = ("#0F172A", "#FFFFFF")
-THEME_BTN_PRIMARY_HOVER = ("#1E293B", "#E2E8F0")
+THEME_BTN_PRIMARY_BG = ("#1E293B", "#FFFFFF")
+THEME_BTN_PRIMARY_HOVER = ("#334155", "#E2E8F0")
 THEME_BTN_PRIMARY_TEXT = ("#FFFFFF", "#000000")
 
-THEME_BTN_SECONDARY_BG = ("#E2E8F0", "#262733")
-THEME_BTN_SECONDARY_HOVER = ("#CBD5E1", "#343646")
-THEME_BTN_SECONDARY_TEXT = ("#0F172A", "#FFFFFF")
+THEME_BTN_SECONDARY_BG = ("#DCE0E6", "#262733")
+THEME_BTN_SECONDARY_HOVER = ("#CFD4DC", "#343646")
+THEME_BTN_SECONDARY_TEXT = ("#1E293B", "#FFFFFF")
 
 THEME_ACCENT_BLUE = ("#2563EB", "#3B82F6")
 THEME_ACCENT_RED = ("#DC2626", "#EF4444")
@@ -96,6 +96,9 @@ class YouTubeDownloaderApp(ctk.CTk):
         self.current_info = None
         self.is_fetching = False
 
+        # Thumbnail memory cache for instant, lag-free UI
+        self._thumb_cache = {}
+
         # Queue Management
         self.active_item = None
         self.queued_items = []
@@ -154,13 +157,13 @@ class YouTubeDownloaderApp(ctk.CTk):
         # 8. Collapsible Activity Log Drawer
         self._create_log_drawer(self.scroll_frame)
 
-        # Render seamless background grid
-        self.after(50, self._render_tear_free_grid_background)
+        # Render fast, lightweight background grid
+        self.after(30, self._render_tear_free_grid_background)
 
     def _render_tear_free_grid_background(self):
         """
-        Renders a seamless, tear-free, full-canvas background dot grid using hardware-accelerated image blitting.
-        This completely eliminates screen tearing and lag when scrolling fast!
+        Renders a non-blinding soft grid background using lightweight bitmap tiling.
+        Ultra fast on low-end CPUs and hardware-accelerated for smooth scrolling!
         """
         try:
             canvas = self.scroll_frame._parent_canvas
@@ -171,11 +174,11 @@ class YouTubeDownloaderApp(ctk.CTk):
 
             self._last_bg_mode = mode
             tile_size = 28
-            dot_color = (36, 38, 50, 255) if mode == "Dark" else (210, 214, 224, 255)
-            bg_color = (11, 12, 14, 255) if mode == "Dark" else (240, 242, 245, 255)
+            dot_color = (36, 38, 50, 255) if mode == "Dark" else (200, 204, 214, 255)
+            bg_color = (11, 12, 14, 255) if mode == "Dark" else (235, 236, 239, 255)
 
-            # Generate tiled image
-            full_w, full_h = 2400, 3600
+            # Fast pattern generation
+            full_w, full_h = 2200, 3400
             pattern_img = Image.new("RGBA", (full_w, full_h), bg_color)
             draw = ImageDraw.Draw(pattern_img)
 
@@ -187,8 +190,8 @@ class YouTubeDownloaderApp(ctk.CTk):
             canvas.delete("bg_pattern")
             canvas.create_image(0, 0, image=self._bg_photo, anchor="nw", tags="bg_pattern")
             canvas.tag_lower("bg_pattern")
-        except Exception as e:
-            print(f"Grid render note: {e}")
+        except Exception:
+            pass
 
     def _create_header(self, parent):
         header_frame = ctk.CTkFrame(parent, fg_color="transparent")
@@ -350,7 +353,7 @@ class YouTubeDownloaderApp(ctk.CTk):
         )
         self.meta_duration_label.pack(side="left")
 
-        # Title (Wrapping without overlapping)
+        # Title
         self.meta_title_label = ctk.CTkLabel(
             meta_box,
             text="Paste a link above to inspect video or playlist details.",
@@ -979,10 +982,13 @@ class YouTubeDownloaderApp(ctk.CTk):
             self.status_msg_label.configure(text=f"Loaded {platform['name']} media details.")
             self._log(f"Loaded Media: '{title}' ({duration})")
 
-        # Load Thumbnail
+        # Load Thumbnail (with memory cache)
         thumb_url = info.get('thumbnail')
         if thumb_url:
-            threading.Thread(target=self._load_thumbnail_worker, args=(thumb_url,), daemon=True).start()
+            if thumb_url in self._thumb_cache:
+                self._set_thumbnail_image(self._thumb_cache[thumb_url])
+            else:
+                threading.Thread(target=self._load_thumbnail_worker, args=(thumb_url,), daemon=True).start()
 
     def _populate_playlist_tracker(self, entries):
         for widget in self.pl_items_container.winfo_children():
@@ -1050,14 +1056,15 @@ class YouTubeDownloaderApp(ctk.CTk):
 
     def _load_thumbnail_worker(self, thumb_url):
         try:
-            resp = requests.get(thumb_url, timeout=10)
+            resp = requests.get(thumb_url, timeout=8)
             if resp.status_code == 200:
                 img_data = resp.content
                 image = Image.open(io.BytesIO(img_data))
                 ctk_image = ctk.CTkImage(light_image=image, dark_image=image, size=(170, 110))
+                self._thumb_cache[thumb_url] = ctk_image
                 self.after(0, lambda: self._set_thumbnail_image(ctk_image))
         except Exception as e:
-            self._log(f"Thumbnail load failed: {e}")
+            self._log(f"Thumbnail load note: {e}")
 
     def _set_thumbnail_image(self, ctk_image):
         self.thumb_label.configure(image=ctk_image, text="")
