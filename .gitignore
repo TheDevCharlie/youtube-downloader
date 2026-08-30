@@ -2,4 +2,9 @@ build/
 __pycache__/
 *.pyc
 *.spec
+*.obj
+*.exp
+*.lib
+webview2.zip
+webview2_sdk/
 .system_generated/
