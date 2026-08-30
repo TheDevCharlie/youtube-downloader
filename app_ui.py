@@ -3,6 +3,7 @@ import sys
 import threading
 import uuid
 import io
+import ctypes
 import requests
 from PIL import Image, ImageTk, ImageDraw
 import tkinter as tk
@@ -12,6 +13,14 @@ import customtkinter as ctk
 from config_manager import ConfigManager
 from downloader_core import DownloaderCore, DownloadCancelledException
 from circular_progress import CircularProgressRing
+from mini_widget import MiniWidget
+
+# Fix Windows Taskbar App Icon Grouping
+try:
+    myappid = "charlie.yt.downloader.v1"
+    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+except Exception:
+    pass
 
 # Configure theme
 ctk.set_appearance_mode("Dark")
@@ -112,24 +121,22 @@ class YouTubeDownloaderApp(ctk.CTk):
     def __init__(self):
         super().__init__()
 
-        self.title("Universal Media & Playlist Downloader Pro")
+        self.title("Charlie-yt")
         self.geometry("1040x960")
         self.minsize(560, 700)
         self.configure(fg_color=THEME_BG)
 
-        # Set Window Title Bar & Taskbar Icon
-        try:
-            icon_img = generate_play_icon()
-            self._icon_photo = ImageTk.PhotoImage(icon_img)
-            self.iconphoto(False, self._icon_photo)
-        except Exception:
-            pass
+        # Set Native Taskbar & Window Icon
+        self._setup_window_icon()
 
         # Core logic & Config
         self.config_manager = ConfigManager()
         self.core = DownloaderCore()
         self.current_info = None
         self.is_fetching = False
+
+        # Mini Widget Reference
+        self.mini_widget = None
 
         # Thumbnail memory cache
         self._thumb_cache = {}
@@ -156,6 +163,24 @@ class YouTubeDownloaderApp(ctk.CTk):
 
         # Bind resize with debouncing
         self.bind("<Configure>", self._on_window_configure)
+
+    def _setup_window_icon(self):
+        """Sets both the window titlebar icon and the native Windows taskbar icon."""
+        try:
+            icon_path = os.path.join(os.path.dirname(__file__), "app_icon.ico")
+            if os.path.exists(icon_path):
+                self.iconbitmap(icon_path)
+            else:
+                icon_img = generate_play_icon()
+                self._icon_photo = ImageTk.PhotoImage(icon_img)
+                self.iconphoto(False, self._icon_photo)
+        except Exception:
+            try:
+                icon_img = generate_play_icon()
+                self._icon_photo = ImageTk.PhotoImage(icon_img)
+                self.iconphoto(False, self._icon_photo)
+            except Exception:
+                pass
 
     def _load_saved_history(self):
         try:
@@ -200,7 +225,7 @@ class YouTubeDownloaderApp(ctk.CTk):
         # 7. Separated Active Download Section
         self._create_active_download_section(self.scroll_frame)
 
-        # 8. Total Queue Progress Tracker & History Section (with Start Queue button)
+        # 8. Total Queue Progress Tracker & History Section
         self._create_queue_section(self.scroll_frame)
 
         # 9. Collapsible Activity Log Drawer
@@ -249,14 +274,32 @@ class YouTubeDownloaderApp(ctk.CTk):
 
         title_lbl = ctk.CTkLabel(
             header_frame,
-            text="Downloader",
+            text="Charlie-yt",
             font=ctk.CTkFont(size=28, weight="bold"),
             text_color=THEME_TEXT_PRIMARY
         )
         title_lbl.grid(row=0, column=0, sticky="w")
 
+        right_btns = ctk.CTkFrame(header_frame, fg_color="transparent")
+        right_btns.grid(row=0, column=1, sticky="e")
+
+        # Mini Widget Minimize Button
+        self.widget_btn = ctk.CTkButton(
+            right_btns,
+            text="📌 Mini Widget",
+            width=105,
+            height=32,
+            corner_radius=CORNER_RADIUS_SM,
+            fg_color=THEME_BTN_SECONDARY_BG,
+            hover_color=THEME_BTN_SECONDARY_HOVER,
+            text_color=THEME_BTN_SECONDARY_TEXT,
+            font=ctk.CTkFont(size=12, weight="bold"),
+            command=self._toggle_mini_widget
+        )
+        self.widget_btn.pack(side="left", padx=(0, 8))
+
         self.theme_btn = ctk.CTkButton(
-            header_frame,
+            right_btns,
             text="🌙 Dark",
             width=85,
             height=32,
@@ -267,7 +310,21 @@ class YouTubeDownloaderApp(ctk.CTk):
             font=ctk.CTkFont(size=12, weight="bold"),
             command=self._cycle_theme
         )
-        self.theme_btn.grid(row=0, column=1, sticky="e")
+        self.theme_btn.pack(side="left")
+
+    def _toggle_mini_widget(self):
+        """Minimizes main window to a floating top-right widget."""
+        if not self.mini_widget:
+            self.withdraw()
+            self.mini_widget = MiniWidget(self)
+            # Update initial widget data
+            active_title = self.active_item.title if self.active_item else (
+                self.current_info.get('title', 'Ready to download') if self.current_info else "Ready to download"
+            )
+            pct = self.active_item.progress if self.active_item else 0.0
+            spd = self.active_item.speed if self.active_item else "0.0 MB/s"
+            eta = self.active_item.eta if self.active_item else "--"
+            self.mini_widget.update_progress(pct, spd, eta, active_title, is_paused=self.core.is_paused())
 
     def _create_url_capsule(self, parent):
         url_card = ctk.CTkFrame(
@@ -769,7 +826,6 @@ class YouTubeDownloaderApp(ctk.CTk):
         q_actions = ctk.CTkFrame(q_header, fg_color="transparent")
         q_actions.pack(side="right")
 
-        # Start Queue Downloads directly
         self.start_queue_btn = ctk.CTkButton(
             q_actions,
             text="▶ Start Queue",
@@ -1702,21 +1758,28 @@ class YouTubeDownloaderApp(ctk.CTk):
                 total = data.get('total_str', '')
                 self.size_detail_label.configure(text=f"{downloaded} / {total}")
 
+                filename = data.get('filename', '')
+                pl_idx = data.get('playlist_index')
+                pl_count = data.get('playlist_count')
+
                 if self.active_item:
                     self.active_item.progress = pct
                     self.active_item.eta_sec = eta_sec
                     self.active_item.downloaded_bytes = data.get('downloaded_bytes', 0)
                     self.active_item.total_bytes = data.get('total_bytes', 0)
 
-                filename = data.get('filename', '')
-                pl_idx = data.get('playlist_index')
-                pl_count = data.get('playlist_count')
-
                 if pl_idx and pl_count:
                     self.status_msg_label.configure(text=f"[{pl_idx}/{pl_count}] {filename[:36]}...")
                     self._update_playlist_item_progress(pl_idx, pct, is_active=True)
                 else:
                     self.status_msg_label.configure(text=f"Downloading: {filename[:42]}...")
+
+                # Sync with floating mini widget
+                if self.mini_widget:
+                    self.mini_widget.update_progress(
+                        pct, speed_str, eta, filename or (self.active_item.title if self.active_item else ""),
+                        is_paused=self.core.is_paused()
+                    )
 
                 self._update_total_queue_metrics()
 

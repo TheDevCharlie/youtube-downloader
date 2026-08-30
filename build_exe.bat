@@ -1,12 +1,12 @@
 @echo off
-title Building Universal Media Downloader Executable
+title Building Charlie-yt Executable
 echo ===================================================
-echo   Compiling Universal Media Downloader to EXE...
+echo   Compiling Charlie-yt to Standalone Windows EXE...
 echo ===================================================
 
 python -m PyInstaller --noconsole --onefile ^
   --icon=app_icon.ico ^
-  --name="UniversalMediaDownloader" ^
+  --name="Charlie-yt" ^
   --collect-all customtkinter ^
   --collect-all yt_dlp ^
   --collect-all PIL ^
@@ -14,6 +14,6 @@ python -m PyInstaller --noconsole --onefile ^
 
 echo.
 echo ===================================================
-echo   Build complete! Output located at: dist\UniversalMediaDownloader.exe
+echo   Build complete! Output located at: dist\Charlie-yt.exe
 echo ===================================================
 pause
