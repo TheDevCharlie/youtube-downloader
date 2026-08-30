@@ -14,6 +14,7 @@ from config_manager import ConfigManager
 from downloader_core import DownloaderCore, DownloadCancelledException
 from circular_progress import CircularProgressRing
 from mini_widget import MiniWidget
+from native_backend.native_bridge import native_engine
 
 # Fix Windows Taskbar App Icon Grouping
 try:
@@ -168,7 +169,6 @@ class YouTubeDownloaderApp(ctk.CTk):
         self.bind("<Configure>", self._on_window_configure)
 
     def _setup_window_icon(self):
-        """Sets both the window titlebar icon and the native Windows taskbar icon."""
         try:
             icon_path = os.path.join(os.path.dirname(__file__), "app_icon.ico")
             if os.path.exists(icon_path):
@@ -186,7 +186,6 @@ class YouTubeDownloaderApp(ctk.CTk):
                 pass
 
     def _load_saved_session(self):
-        """Restores both pending queued items and history from disk across sessions."""
         try:
             raw_queue = self.config_manager.load_queue()
             for q in raw_queue:
@@ -201,7 +200,6 @@ class YouTubeDownloaderApp(ctk.CTk):
             print(f"Error restoring session: {e}")
 
     def _persist_queue_state(self):
-        """Saves current queue order and progress to disk."""
         with self.queue_lock:
             q_dicts = [item.to_dict() for item in self.queued_items]
             self.config_manager.save_queue(q_dicts)
@@ -210,7 +208,6 @@ class YouTubeDownloaderApp(ctk.CTk):
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(0, weight=1)
 
-        # Main scrollable canvas frame
         self.scroll_frame = ctk.CTkScrollableFrame(
             self, 
             corner_radius=0, 
@@ -250,7 +247,7 @@ class YouTubeDownloaderApp(ctk.CTk):
         self.after(10, self._render_tear_free_grid_background)
 
     def _render_tear_free_grid_background(self):
-        """Ultra-fast, hardware-accelerated grid background generation (under 12ms)."""
+        """Ultra-fast, C++ native accelerated grid background generation."""
         try:
             canvas = self.scroll_frame._parent_canvas
             mode = ctk.get_appearance_mode()
@@ -259,21 +256,29 @@ class YouTubeDownloaderApp(ctk.CTk):
                 return
 
             self._last_bg_mode = mode
-            tile_size = 28
-            dot_color = (36, 38, 50, 255) if mode == "Dark" else (205, 205, 208, 255)
-            bg_color = (11, 12, 14, 255) if mode == "Dark" else (242, 242, 242, 255)
+            is_dark = (mode == "Dark")
 
-            w_tiles, h_tiles = 80, 85
-            tile = Image.new("RGBA", (tile_size, tile_size), bg_color)
-            draw = ImageDraw.Draw(tile)
-            draw.ellipse([tile_size//2 - 1, tile_size//2 - 1, tile_size//2 + 1, tile_size//2 + 1], fill=dot_color)
+            # Try fast C++ native rasterization first
+            pattern_img = native_engine.generate_grid_image(
+                width=2240, height=2380, tile_size=28, is_dark=is_dark
+            )
 
-            pattern_img = Image.new("RGBA", (w_tiles * tile_size, h_tiles * tile_size))
-            row_img = Image.new("RGBA", (w_tiles * tile_size, tile_size))
-            for x in range(w_tiles):
-                row_img.paste(tile, (x * tile_size, 0))
-            for y in range(h_tiles):
-                pattern_img.paste(row_img, (0, y * tile_size))
+            # Fallback to PIL if native C++ engine is unavailable
+            if not pattern_img:
+                tile_size = 28
+                dot_color = (36, 38, 50, 255) if is_dark else (205, 205, 208, 255)
+                bg_color = (11, 12, 14, 255) if is_dark else (242, 242, 242, 255)
+                w_tiles, h_tiles = 80, 85
+                tile = Image.new("RGBA", (tile_size, tile_size), bg_color)
+                draw = ImageDraw.Draw(tile)
+                draw.ellipse([tile_size//2 - 1, tile_size//2 - 1, tile_size//2 + 1, tile_size//2 + 1], fill=dot_color)
+
+                pattern_img = Image.new("RGBA", (w_tiles * tile_size, h_tiles * tile_size))
+                row_img = Image.new("RGBA", (w_tiles * tile_size, tile_size))
+                for x in range(w_tiles):
+                    row_img.paste(tile, (x * tile_size, 0))
+                for y in range(h_tiles):
+                    pattern_img.paste(row_img, (0, y * tile_size))
 
             self._bg_photo = ImageTk.PhotoImage(pattern_img)
             canvas.delete("bg_pattern")
@@ -990,18 +995,22 @@ class YouTubeDownloaderApp(ctk.CTk):
                 messagebox.showerror("Folder Error", f"Cannot open folder: {e}")
 
     def _move_queue_item_up(self, index):
-        """Moves a queued item up in download priority."""
+        """Moves a queued item up in download priority using native C++ engine."""
         if index > 0 and index < len(self.queued_items):
             with self.queue_lock:
-                self.queued_items[index], self.queued_items[index - 1] = self.queued_items[index - 1], self.queued_items[index]
+                indices = list(range(len(self.queued_items)))
+                new_order = native_engine.reorder_indices(indices, index, index - 1)
+                self.queued_items = [self.queued_items[i] for i in new_order]
             self._persist_queue_state()
             self._refresh_queue_ui()
 
     def _move_queue_item_down(self, index):
-        """Moves a queued item down in download priority."""
+        """Moves a queued item down in download priority using native C++ engine."""
         if index >= 0 and index < len(self.queued_items) - 1:
             with self.queue_lock:
-                self.queued_items[index], self.queued_items[index + 1] = self.queued_items[index + 1], self.queued_items[index]
+                indices = list(range(len(self.queued_items)))
+                new_order = native_engine.reorder_indices(indices, index, index + 1)
+                self.queued_items = [self.queued_items[i] for i in new_order]
             self._persist_queue_state()
             self._refresh_queue_ui()
 
@@ -1057,7 +1066,7 @@ class YouTubeDownloaderApp(ctk.CTk):
     def _load_saved_preferences(self):
         saved_dir = self.config_manager.get("download_dir", os.path.expanduser("~/Downloads"))
         self.dir_entry.insert(0, saved_dir)
-        self._log("Application ready.")
+        self._log("Charlie-yt C++ Native Engine Loaded.")
 
     def _log(self, message):
         def _update():

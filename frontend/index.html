@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Charlie-yt</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- Standard Main View -->
+  <div id="main-app" class="app-container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="brand">
+        <div class="logo-badge">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+            <polygon points="8,5 19,12 8,19" />
+          </svg>
+        </div>
+        <h1 class="title">Charlie-yt</h1>
+      </div>
+      <div class="header-actions">
+        <button id="btn-mini-widget" class="btn btn-secondary">📌 Mini Widget</button>
+        <button id="btn-theme-toggle" class="btn btn-secondary">🌙 Dark</button>
+      </div>
+    </header>
+
+    <!-- URL Input Capsule -->
+    <section class="card url-capsule-card">
+      <div class="url-input-group">
+        <input type="text" id="url-input" placeholder="Enter or paste YouTube, TikTok, Instagram, Twitter, Pinterest URL..." autocomplete="off">
+        <div class="url-actions">
+          <button id="btn-paste" class="btn btn-secondary">📋 Paste</button>
+          <button id="btn-inspect" class="btn btn-primary">🔍 Inspect</button>
+          <button id="btn-clear-url" class="btn btn-secondary btn-icon">✕</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Bento Grid Container -->
+    <section class="bento-grid">
+      <!-- Bento Card 1: Media Preview -->
+      <div class="card bento-card preview-card">
+        <div class="thumb-box" id="thumb-container">
+          <span class="no-thumb-txt">No Media<br>Selected</span>
+          <img id="thumb-img" class="thumb-img hidden" alt="Thumbnail">
+        </div>
+        <div class="preview-meta">
+          <div class="badge-row">
+            <span id="platform-badge" class="badge badge-platform">READY</span>
+            <span id="duration-badge" class="meta-txt"></span>
+          </div>
+          <h2 id="media-title" class="media-title">Paste a link above to inspect video or playlist details.</h2>
+          <p id="media-author" class="meta-txt"></p>
+          <div id="playlist-range-box" class="playlist-range-box hidden">
+            <label for="pl-range-input">Items Range:</label>
+            <input type="text" id="pl-range-input" placeholder="All (or e.g. 1-10, 15)">
+          </div>
+        </div>
+      </div>
+
+      <!-- Bento Card 2: Speedometer -->
+      <div class="card bento-card speed-card">
+        <div class="speed-content">
+          <div id="speed-val" class="speed-val">0.0</div>
+          <div class="speed-unit">MB/s Speed</div>
+          <div id="size-details" class="size-details">0 MB / 0 MB</div>
+        </div>
+      </div>
+
+      <!-- Bento Card 3: Circular Progress Ring -->
+      <div class="card bento-card progress-card">
+        <div class="ring-container">
+          <svg class="progress-ring" viewBox="0 0 140 140">
+            <circle class="ring-bg" cx="70" cy="70" r="54" />
+            <circle id="progress-circle" class="ring-fill" cx="70" cy="70" r="54" />
+          </svg>
+          <div class="ring-overlay">
+            <span id="ring-percent" class="ring-percent">0%</span>
+            <span id="ring-status" class="ring-status">Ready</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Playlist Itemized Tracker (Conditional) -->
+    <section id="playlist-tracker-card" class="card playlist-tracker-card hidden">
+      <div class="card-header">
+        <h3 id="playlist-tracker-title">📑 Playlist Items (0 selected)</h3>
+        <button id="btn-pl-select-all" class="btn btn-secondary btn-sm">Select All</button>
+      </div>
+      <div id="playlist-items-list" class="playlist-items-list"></div>
+    </section>
+
+    <!-- Settings Split (Folder & Format Pills) -->
+    <section class="split-grid">
+      <!-- Folder Card -->
+      <div class="card folder-card">
+        <div class="folder-group">
+          <input type="text" id="folder-input" placeholder="Download location...">
+          <div class="folder-actions">
+            <button id="btn-browse-folder" class="btn btn-secondary">📁 Browse</button>
+            <button id="btn-open-folder" class="btn btn-secondary">📂 Open</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Quality / Format Pill Segment -->
+      <div class="card format-card">
+        <div class="segment-group">
+          <button class="seg-btn active" data-format="1080p">1080p</button>
+          <button class="seg-btn" data-format="4K MP4">4K MP4</button>
+          <button class="seg-btn" data-format="720p">720p</button>
+          <button class="seg-btn" data-format="480p">480p</button>
+          <button class="seg-btn" data-format="360p">360p</button>
+          <button class="seg-btn" data-format="MP3 Audio">MP3 Audio</button>
+          <button class="seg-btn" data-format="WAV">WAV</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Action Bar -->
+    <section class="card action-bar-card">
+      <div class="action-bar-inner">
+        <div class="primary-actions">
+          <button id="btn-download-now" class="btn btn-primary btn-large">🚀 DOWNLOAD NOW</button>
+          <button id="btn-add-queue" class="btn btn-secondary btn-large">➕ ADD TO QUEUE</button>
+        </div>
+        <div class="control-actions">
+          <button id="btn-pause" class="btn btn-secondary" disabled>⏸ PAUSE</button>
+          <button id="btn-cancel" class="btn btn-danger" disabled>⏹ CANCEL</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Active Download Card -->
+    <section class="card active-download-card">
+      <div class="card-header">
+        <h3>⚡ Active Download</h3>
+      </div>
+      <div id="active-download-box" class="active-download-box">
+        <p class="empty-txt">No active download in progress.</p>
+      </div>
+    </section>
+
+    <!-- Queued Items & History Section (With Reorder) -->
+    <section class="card queue-card">
+      <div class="card-header">
+        <h3 id="queue-header-title">📋 Queued Items & History (0 pending • 0 in history)</h3>
+        <div class="queue-header-actions">
+          <button id="btn-start-queue" class="btn btn-primary btn-sm">▶ Start Queue</button>
+          <button id="btn-clear-queue" class="btn btn-secondary btn-sm">Clear Queued</button>
+          <button id="btn-clear-history" class="btn btn-secondary btn-sm">Clear History</button>
+        </div>
+      </div>
+
+      <!-- Total Queue Dashboard Tracker -->
+      <div class="total-queue-dashboard">
+        <div class="dashboard-row">
+          <span id="total-q-count" class="dash-txt-bold">📊 Overall Queue: 0 items • 0% Done</span>
+          <span id="total-q-eta" class="dash-txt-muted">💾 Size: 0 MB | ⏱ Total ETA: --</span>
+        </div>
+        <div class="progress-bar-track">
+          <div id="total-q-pbar" class="progress-bar-fill" style="width: 0%;"></div>
+        </div>
+      </div>
+
+      <!-- Queue & History List -->
+      <div id="queue-items-list" class="queue-items-list">
+        <p class="empty-txt">No queued downloads or history. Inspect a link and click 'Add to Queue' to stage downloads.</p>
+      </div>
+    </section>
+
+    <!-- Activity Log Drawer -->
+    <section class="card log-card">
+      <div class="card-header">
+        <span id="status-msg-lbl" class="status-msg">Ready to download</span>
+        <button id="btn-toggle-log" class="btn btn-secondary btn-sm">Activity Log</button>
+      </div>
+      <div id="log-box" class="log-box"></div>
+    </section>
+  </div>
+
+  <!-- Floating Mini Widget View (Picture-in-Picture) -->
+  <div id="mini-widget" class="mini-widget-container hidden">
+    <div class="mini-card">
+      <div class="mini-header" id="mini-drag-handle">
+        <div class="mini-brand">
+          <span class="mini-logo-dot"></span>
+          <span class="mini-title">Charlie-yt • Widget</span>
+        </div>
+        <div class="mini-controls">
+          <button id="btn-mini-expand" class="mini-btn" title="Restore App">⤢</button>
+          <button id="btn-mini-close" class="mini-btn" title="Close Widget">✕</button>
+        </div>
+      </div>
+      <div class="mini-body">
+        <p id="mini-item-title" class="mini-item-title">Ready to download</p>
+        <div class="progress-bar-track mini-track">
+          <div id="mini-pbar" class="progress-bar-fill" style="width: 0%;"></div>
+        </div>
+        <div class="mini-footer">
+          <span id="mini-metrics" class="mini-metrics">0% • 0.0 MB/s • ETA --</span>
+          <button id="btn-mini-pause" class="btn btn-secondary btn-xs">⏸</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
