@@ -7,6 +7,7 @@
 #include <string>
 #include <iostream>
 #include <thread>
+#include <atomic>
 
 #include "../webview2_sdk/build/native/include/WebView2.h"
 #include "downloader_bridge.h"
@@ -17,6 +18,7 @@ using namespace Microsoft::WRL;
 static HWND g_hWnd = NULL;
 static ComPtr<ICoreWebView2Controller> g_webviewController;
 static ComPtr<ICoreWebView2> g_webview;
+static std::atomic<bool> g_isMiniWidgetMode(false);
 
 // Forward Declarations
 LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
@@ -291,9 +293,11 @@ void HandleWebMessage(const std::wstring& message) {
     }
     else if (message.find(L"\"type\":\"SET_WINDOW_SIZE\"") != std::wstring::npos || message.find(L"\"type\": \"SET_WINDOW_SIZE\"") != std::wstring::npos) {
         if (message.find(L"\"topmost\":true") != std::wstring::npos || message.find(L"\"topmost\": true") != std::wstring::npos) {
+            g_isMiniWidgetMode = true;
             int screen_w = GetSystemMetrics(SM_CXSCREEN);
             SetWindowPos(g_hWnd, HWND_TOPMOST, screen_w - 360, 40, 340, 160, SWP_SHOWWINDOW);
         } else {
+            g_isMiniWidgetMode = false;
             int screen_w = GetSystemMetrics(SM_CXSCREEN);
             int screen_h = GetSystemMetrics(SM_CYSCREEN);
             SetWindowPos(g_hWnd, HWND_NOTOPMOST, (screen_w - 1040)/2, (screen_h - 960)/2, 1040, 960, SWP_SHOWWINDOW);
@@ -303,6 +307,18 @@ void HandleWebMessage(const std::wstring& message) {
 
 LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) {
     switch (message) {
+        case WM_GETMINMAXINFO: {
+            LPMINMAXINFO lpMMI = (LPMINMAXINFO)lParam;
+            if (g_isMiniWidgetMode) {
+                lpMMI->ptMinTrackSize.x = 300;
+                lpMMI->ptMinTrackSize.y = 140;
+            } else {
+                // Minimum width and height to prevent UI elements from clipping
+                lpMMI->ptMinTrackSize.x = 640;
+                lpMMI->ptMinTrackSize.y = 700;
+            }
+            return 0;
+        }
         case WM_SIZE:
             if (g_webviewController) {
                 RECT bounds;
