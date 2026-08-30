@@ -2,13 +2,13 @@ import tkinter as tk
 import customtkinter as ctk
 
 class CircularProgressRing(ctk.CTkFrame):
-    def __init__(self, master, size=130, ring_width=8, **kwargs):
+    def __init__(self, master, size=130, ring_width=7, **kwargs):
         super().__init__(
             master, 
-            fg_color=("#F5F6F8", "#181922"), 
-            corner_radius=16, 
+            fg_color=("#FFFFFF", "#181922"), 
+            corner_radius=8, 
             border_width=1,
-            border_color=("#D3D6DC", "#262733"),
+            border_color=("#E0E0E0", "#262733"),
             **kwargs
         )
         
@@ -16,14 +16,14 @@ class CircularProgressRing(ctk.CTkFrame):
         self.ring_width = ring_width
         self.percentage = 0.0
 
-        # Non-blinding soft light palette & OLED dark palette
+        # WOVE porcelain silver light palette & OLED dark palette
         self.colors = {
             "Light": {
-                "bg": "#F5F6F8",
-                "track": "#DCE0E6",
-                "progress": "#1E293B",
-                "text": "#1E293B",
-                "sub": "#64748B"
+                "bg": "#FFFFFF",
+                "track": "#E8E8E8",
+                "progress": "#222222",
+                "text": "#222222",
+                "sub": "#888888"
             },
             "Dark": {
                 "bg": "#181922",
@@ -50,9 +50,9 @@ class CircularProgressRing(ctk.CTkFrame):
             self,
             text="Ready",
             font=ctk.CTkFont(size=11, weight="bold"),
-            text_color=("#64748B", "#8A8C98")
+            text_color=("#888888", "#8A8C98")
         )
-        self.sub_label.pack(pady=(0, 8))
+        self.sub_label.pack(pady=(0, 6))
 
         self.draw(0.0)
 
