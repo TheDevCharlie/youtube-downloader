@@ -208,7 +208,7 @@ class DownloaderCore:
             while self.pause_event.is_set():
                 if self.cancel_event.is_set():
                     raise DownloadCancelledException("Download was cancelled by user.")
-                time.sleep(0.12)
+                time.sleep(0.10)
 
         def yt_hook(d):
             check_state()
@@ -222,7 +222,8 @@ class DownloaderCore:
             status = d.get('status')
             if status == 'downloading':
                 now = time.monotonic()
-                if now - self._last_progress_time < 0.075:
+                # Fast ~20 Hz updates (every 50ms) for snappy visual progression
+                if now - self._last_progress_time < 0.050:
                     return
                 self._last_progress_time = now
 
@@ -356,7 +357,6 @@ class DownloaderCore:
             check_state()
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info_res = ydl.extract_info(url, download=True)
-                # Determine final file path on disk
                 target_path = None
                 if info_res:
                     try:
