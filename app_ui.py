@@ -197,10 +197,10 @@ class YouTubeDownloaderApp(ctk.CTk):
         # 6. Action Bar
         self._create_action_bar(self.scroll_frame)
 
-        # 7. Separated Active Download Section (With Direct Play / Open)
+        # 7. Separated Active Download Section
         self._create_active_download_section(self.scroll_frame)
 
-        # 8. Total Queue Progress Tracker & History Section
+        # 8. Total Queue Progress Tracker & History Section (with Start Queue button)
         self._create_queue_section(self.scroll_frame)
 
         # 9. Collapsible Activity Log Drawer
@@ -223,7 +223,6 @@ class YouTubeDownloaderApp(ctk.CTk):
             dot_color = (36, 38, 50, 255) if mode == "Dark" else (205, 205, 208, 255)
             bg_color = (11, 12, 14, 255) if mode == "Dark" else (242, 242, 242, 255)
 
-            # Fast block row tiling in PIL
             w_tiles, h_tiles = 80, 85
             tile = Image.new("RGBA", (tile_size, tile_size), bg_color)
             draw = ImageDraw.Draw(tile)
@@ -770,6 +769,21 @@ class YouTubeDownloaderApp(ctk.CTk):
         q_actions = ctk.CTkFrame(q_header, fg_color="transparent")
         q_actions.pack(side="right")
 
+        # Start Queue Downloads directly
+        self.start_queue_btn = ctk.CTkButton(
+            q_actions,
+            text="▶ Start Queue",
+            width=95,
+            height=26,
+            corner_radius=CORNER_RADIUS_SM,
+            font=ctk.CTkFont(size=11, weight="bold"),
+            fg_color=THEME_BTN_PRIMARY_BG,
+            hover_color=THEME_BTN_PRIMARY_HOVER,
+            text_color=THEME_BTN_PRIMARY_TEXT,
+            command=self._start_queue_downloads
+        )
+        self.start_queue_btn.pack(side="left", padx=(0, 6))
+
         self.clear_queued_btn = ctk.CTkButton(
             q_actions,
             text="Clear Queued",
@@ -798,7 +812,7 @@ class YouTubeDownloaderApp(ctk.CTk):
         )
         self.clear_finished_btn.pack(side="left")
 
-        # --- NEW: TOTAL QUEUE OVERALL PROGRESS TRACKER CARD ---
+        # TOTAL QUEUE OVERALL PROGRESS TRACKER CARD
         self.total_queue_tracker_card = ctk.CTkFrame(
             self.queue_card,
             fg_color=THEME_CARD_INNER,
@@ -809,7 +823,6 @@ class YouTubeDownloaderApp(ctk.CTk):
         self.total_queue_tracker_card.grid(row=1, column=0, sticky="ew", padx=12, pady=(0, 10))
         self.total_queue_tracker_card.grid_columnconfigure(1, weight=1)
 
-        # Left label: overall items & progress %
         self.total_q_progress_lbl = ctk.CTkLabel(
             self.total_queue_tracker_card,
             text="📊 Overall Queue: 0 items • 0% Done",
@@ -818,7 +831,6 @@ class YouTubeDownloaderApp(ctk.CTk):
         )
         self.total_q_progress_lbl.grid(row=0, column=0, padx=10, pady=(8, 4), sticky="w")
 
-        # Right label: Total size & aggregate ETA
         self.total_q_size_eta_lbl = ctk.CTkLabel(
             self.total_queue_tracker_card,
             text="💾 Size: 0 MB | ⏱ Total ETA: --",
@@ -827,7 +839,6 @@ class YouTubeDownloaderApp(ctk.CTk):
         )
         self.total_q_size_eta_lbl.grid(row=0, column=1, padx=10, pady=(8, 4), sticky="e")
 
-        # Aggregate Queue Progress Bar
         self.total_q_pbar = ctk.CTkProgressBar(self.total_queue_tracker_card, height=8)
         self.total_q_pbar.set(0.0)
         self.total_q_pbar.grid(row=1, column=0, columnspan=2, sticky="ew", padx=10, pady=(0, 8))
@@ -901,7 +912,6 @@ class YouTubeDownloaderApp(ctk.CTk):
             except Exception as e:
                 messagebox.showerror("Play Error", f"Unable to open file: {e}")
         else:
-            # If path doesn't exist directly (or was moved), try parent directory
             parent_dir = os.path.dirname(file_path)
             if os.path.exists(parent_dir):
                 os.startfile(parent_dir)
@@ -1101,7 +1111,6 @@ class YouTubeDownloaderApp(ctk.CTk):
             self.status_msg_label.configure(text=f"Loaded {platform['name']} media details.")
             self._log(f"Loaded Media: '{title}' ({duration})")
 
-        # Load Thumbnail (with memory cache)
         thumb_url = info.get('thumbnail')
         if thumb_url:
             if thumb_url in self._thumb_cache:
@@ -1306,11 +1315,24 @@ class YouTubeDownloaderApp(ctk.CTk):
         self._log(f"Added to Queue: {item.title} ({options['quality']})")
         self.status_msg_label.configure(text=f"✓ Added to queue: {item.title[:35]}")
 
+    def _start_queue_downloads(self):
+        """Starts downloading queued items directly without needing a new URL."""
+        if not self.queued_items:
+            messagebox.showinfo("Queue Empty", "There are no pending items in the queue to download.")
+            return
+        self._ensure_queue_running()
+
     def _download_now(self):
         url = self.url_entry.get().strip()
+        
+        # If URL is empty but items exist in queue, start the queue immediately!
         if not url:
-            messagebox.showwarning("Input Required", "Please enter a URL.")
-            return
+            if self.queued_items:
+                self._start_queue_downloads()
+                return
+            else:
+                messagebox.showwarning("Input Required", "Please enter a URL or add items to the queue.")
+                return
 
         download_dir = self.dir_entry.get().strip()
         if not download_dir:
@@ -1333,6 +1355,7 @@ class YouTubeDownloaderApp(ctk.CTk):
             self.cancel_btn.configure(state="normal")
             self.pause_btn.configure(state="normal", text="⏸  PAUSE")
             self.download_btn.configure(state="disabled", text="⏳ PROCESSING QUEUE...")
+            self.start_queue_btn.configure(state="disabled", text="⏳ Running...")
             threading.Thread(target=self._process_queue_worker, daemon=True).start()
 
     def _process_queue_worker(self):
@@ -1400,6 +1423,7 @@ class YouTubeDownloaderApp(ctk.CTk):
 
     def _on_queue_all_finished(self):
         self.download_btn.configure(state="normal", text="🚀  DOWNLOAD NOW")
+        self.start_queue_btn.configure(state="normal", text="▶ Start Queue")
         self.cancel_btn.configure(state="disabled")
         self.pause_btn.configure(state="disabled", text="⏸  PAUSE")
         self.progress_card.set_progress(100.0, "All Done!")
@@ -1447,7 +1471,6 @@ class YouTubeDownloaderApp(ctk.CTk):
         )
         info_lbl.grid(row=0, column=1, sticky="w")
 
-        # Stop Active Button
         stop_btn = ctk.CTkButton(
             row,
             text="Stop Active",
@@ -1526,11 +1549,9 @@ class YouTubeDownloaderApp(ctk.CTk):
             )
             info_lbl.grid(row=0, column=1, padx=4, pady=6, sticky="w")
 
-            # Actions Box on Right (Play Directly, Open Folder, Delete)
             act_row = ctk.CTkFrame(row, fg_color="transparent")
             act_row.grid(row=0, column=2, padx=6, pady=4, sticky="e")
 
-            # Direct Play / Open Button for completed items
             if item.status == "Complete" and item.file_path:
                 play_btn = ctk.CTkButton(
                     act_row,
@@ -1560,7 +1581,6 @@ class YouTubeDownloaderApp(ctk.CTk):
                 )
                 folder_btn.pack(side="left", padx=(0, 4))
 
-            # Delete / Remove button
             del_btn = ctk.CTkButton(
                 act_row,
                 text="✕",
@@ -1576,7 +1596,6 @@ class YouTubeDownloaderApp(ctk.CTk):
             del_btn.pack(side="left")
 
     def _update_total_queue_metrics(self):
-        """Updates aggregate progress, estimated total size, and cumulative ETA for all queue items."""
         total_items = len(self.queued_items) + (1 if self.active_item else 0) + len(self.completed_items)
         if total_items == 0:
             self.total_q_progress_lbl.configure(text="📊 Overall Queue: 0 items • 0% Done")
@@ -1593,7 +1612,6 @@ class YouTubeDownloaderApp(ctk.CTk):
             text=f"📊 Overall Queue: {completed_count} of {total_items} items Done ({int(overall_pct)}%)"
         )
 
-        # Aggregate ETA and total bytes
         total_bytes = sum(q.total_bytes for q in self.queued_items + self.completed_items if q.total_bytes)
         if self.active_item and self.active_item.total_bytes:
             total_bytes += self.active_item.total_bytes
@@ -1606,7 +1624,6 @@ class YouTubeDownloaderApp(ctk.CTk):
             self.active_item.total_str if self.active_item else "Unknown"
         )
 
-        # Cumulative ETA in seconds
         active_eta_sec = self.active_item.eta_sec if (self.active_item and self.active_item.eta_sec) else 0
         est_pending_sec = len(self.queued_items) * (active_eta_sec if active_eta_sec > 0 else 30)
         total_eta_sec = active_eta_sec + est_pending_sec

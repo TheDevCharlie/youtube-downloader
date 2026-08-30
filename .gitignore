@@ -1,11 +1,5 @@
+build/
 __pycache__/
 *.pyc
-*.pyo
-*.pyd
-.env
-build/
-dist/
 *.spec
-.vscode/
-.idea/
-*.log
+.system_generated/
