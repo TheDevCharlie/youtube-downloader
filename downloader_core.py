@@ -142,6 +142,7 @@ class DownloaderCore:
                         thumb = info.get('thumbnails')[-1]['url']
                         
                     title = info.get('title') or info.get('description', 'Media Download')[:60] or f"{platform['name']} Media"
+                    filesize_est = info.get('filesize') or info.get('filesize_approx') or 0
 
                     return {
                         'type': 'video',
@@ -150,6 +151,8 @@ class DownloaderCore:
                         'uploader': info.get('uploader') or info.get('channel') or info.get('uploader_id') or platform['name'],
                         'duration': duration_str,
                         'duration_seconds': duration,
+                        'filesize': filesize_est,
+                        'filesize_str': self.format_bytes(filesize_est) if filesize_est else "Unknown",
                         'thumbnail': thumb,
                         'view_count': info.get('view_count', 0),
                         'upload_date': info.get('upload_date', '')
@@ -179,7 +182,7 @@ class DownloaderCore:
 
     def download(self, url, download_dir, options, progress_callback=None, status_callback=None):
         """
-        Execute download with configured options, pause, cancellation support, and throttled UI updates.
+        Execute download with configured options, returning target output filepath.
         """
         self.reset_cancel()
         self.is_downloading = True
@@ -196,6 +199,7 @@ class DownloaderCore:
         playlist_items = options.get('playlist_items', None)
 
         os.makedirs(download_dir, exist_ok=True)
+        downloaded_filepaths = []
 
         def check_state():
             if self.cancel_event.is_set():
@@ -208,14 +212,17 @@ class DownloaderCore:
 
         def yt_hook(d):
             check_state()
+            filename = d.get('filename', '')
+            if filename and filename not in downloaded_filepaths:
+                downloaded_filepaths.append(filename)
+
             if not progress_callback:
                 return
 
             status = d.get('status')
             if status == 'downloading':
-                now = time.time()
-                # Throttle progress callbacks to ~15 Hz (every 65ms) to keep UI snappy on lower-end devices
-                if now - self._last_progress_time < 0.065:
+                now = time.monotonic()
+                if now - self._last_progress_time < 0.075:
                     return
                 self._last_progress_time = now
 
@@ -245,6 +252,7 @@ class DownloaderCore:
                     eta = d.get('eta')
                     eta_str = f"{eta}s" if eta else "N/A"
 
+                eta_sec = d.get('eta') or 0
                 playlist_index = d.get('playlist_index')
                 playlist_count = d.get('playlist_count') or d.get('n_entries')
 
@@ -257,7 +265,9 @@ class DownloaderCore:
                     'total_str': self.format_bytes(total) if total > 0 else "Unknown",
                     'speed': speed_str,
                     'eta': eta_str,
-                    'filename': os.path.basename(d.get('filename', '')),
+                    'eta_sec': eta_sec,
+                    'filename': os.path.basename(filename),
+                    'filepath': filename,
                     'playlist_index': playlist_index,
                     'playlist_count': playlist_count
                 }
@@ -266,7 +276,8 @@ class DownloaderCore:
             elif status == 'finished':
                 progress_callback({
                     'status': 'processing',
-                    'filename': os.path.basename(d.get('filename', '')),
+                    'filename': os.path.basename(filename),
+                    'filepath': filename,
                     'playlist_index': d.get('playlist_index'),
                     'playlist_count': d.get('playlist_count') or d.get('n_entries'),
                     'message': 'Converting / Finalizing file...'
@@ -344,24 +355,42 @@ class DownloaderCore:
             
             check_state()
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([url])
+                info_res = ydl.extract_info(url, download=True)
+                # Determine final file path on disk
+                target_path = None
+                if info_res:
+                    try:
+                        target_path = ydl.prepare_filename(info_res)
+                        if mode == 'audio':
+                            base, _ = os.path.splitext(target_path)
+                            target_path = f"{base}.{audio_format}"
+                    except Exception:
+                        pass
+
+                if not target_path and downloaded_filepaths:
+                    target_path = downloaded_filepaths[-1]
 
             if self.cancel_event.is_set():
                 raise DownloadCancelledException("Download cancelled.")
 
             if status_callback:
                 status_callback("Download completed successfully!")
-            return True
+            
+            return {
+                'success': True,
+                'file_path': target_path or (downloaded_filepaths[-1] if downloaded_filepaths else download_dir),
+                'files': downloaded_filepaths
+            }
 
         except DownloadCancelledException:
             if status_callback:
                 status_callback("Download cancelled.")
-            return False
+            return {'success': False, 'cancelled': True}
         except Exception as e:
             if self.cancel_event.is_set():
                 if status_callback:
                     status_callback("Download cancelled.")
-                return False
+                return {'success': False, 'cancelled': True}
             if status_callback:
                 status_callback(f"Download failed: {str(e)}")
             raise e
